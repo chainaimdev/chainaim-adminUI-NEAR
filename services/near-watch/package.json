@@ -1,0 +1,20 @@
+{
+  "name": "@chainaim/near-watch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "near-watch: NEAR USDC payments to the x402 paywall, from neardata, QuickNode RPC and a public RPC (first road wins), reconciled against the paywall's claims and streamed to the admin console.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.22"
+  },
+  "scripts": {
+    "start": "node src/main.ts",
+    "test": "node --test --test-force-exit \"test/*.test.ts\" \"../../packages/chain-core/test/*.test.ts\"",
+    "typecheck": "tsc -p .",
+    "record-fixture": "node scripts/record-fixture.ts"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3"
+  }
+}

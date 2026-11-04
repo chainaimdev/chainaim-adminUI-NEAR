@@ -1,0 +1,7 @@
+{
+  "name": "@chainaim/chain-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared, dependency-free chain helpers: CAIP-2 ids, base-unit money (bigint), URL redaction, NEAR ids, the signer interface (step 4 seam).",
+  "type": "module"
+}

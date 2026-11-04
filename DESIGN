@@ -1,0 +1,143 @@
+# ARCHITECTURE — chainaim-adminUI-NEAR (new repository)
+
+Model codebase (read-only reference): `C:\SATHYA\CHAINAIM3003\mcp-servers\chainaim-liveops` (XRPL version: `services/ledger-watch`, `apps/admin-console`).
+Payment source: `chainiam-private-ai` paywall with the NEAR USDC rail (see `ARCHITECTURE-private-ai-NEAR.md`).
+Sections marked **VERIFIED** were read from code or official docs; **GATE** items must be verified before coding.
+
+---
+
+## 0. Rules for the implementer (non-negotiable)
+
+1. **No mocks, stubs or fake data in any runtime path.** Protocol doubles only under `test/` (pattern: liveops `services/ledger-watch/test/rippled-double.ts`).
+2. **No runtime placeholders.** Unknown values are required env vars; startup fails with a clear message when missing.
+3. **Port, don't reinvent.** Read the matching liveops file before writing its NEAR counterpart; keep its contracts (HTTP routes, SSE event names, reconcile states, alert codes) unless NEAR forces a change, and document any change.
+4. Every GATE (§4) is resolved from the named official source. If unreachable or ambiguous: STOP and report.
+5. Secrets only from env / `$SECRETS`; QuickNode URLs contain a token → always redacted in logs and `/api/feeds`.
+6. Money as strings + `bigint`; never floats.
+7. All behaviour configurable by CLI flags / env with safe defaults.
+8. Hackathon rules: repo public by 2026-11-14T23:59Z; README written for AI screeners ("do X → see Y"); `HACKATHON-DISCLOSURE.md` lists what was ported from liveops (baseline) vs built in the window; LICENSE (MIT).
+
+---
+
+## 1. Goal and scope
+
+An operator console that shows NEAR USDC payments to the paywall live, from two independent sources — **what the paywall says it settled** (claims) and **what the chain shows** (transfers) — and reconciles them.
+
+**In scope now:** `services/near-watch`, `apps/admin-console`, shared `packages/chain-core`.
+**Later (step 4):** `services/custody` — OutLayer TEE wallets for agent tenants (§8).
+
+---
+
+## 2. Reference behaviour — VERIFIED from liveops
+
+- ledger-watch: several "roads" per transaction; **first road wins**, later roads recorded with delay, duplicates dropped; SQLite tables `txs`, `roads`, `cursors` (cursors only move forward), plus `claims`, `traces`, `recon`.
+- Claims arrive by `POST /ingest/claim` with an ingest key (`LEDGER_WATCH_INGEST_KEY`, 24+ chars, must differ from `ADMIN_API_KEY`) or by tailing `PAYMENT_LOG_FILE`.
+- Reconcile states: `matched`, `pending`, `only_in_log`, `only_on_ledger`, `mismatch`; grace measured in validated ledgers.
+- HTTP: `/healthz`, `/api/snapshot`, `/api/txs`, `/api/tx/<hash>`, `/api/feeds`, `/api/claims`, `/api/reconcile`, `/api/metrics`, `/api/trace/<invoiceId>`, `/api/seller`, SSE `/stream` (`hello`, `ledger`, `tx`, `road`, `balances`, `status`, `alert`, `claim`, `trace`, `reconcile`, `seller`).
+- Admin console (Next.js) proxies these with the admin key kept server-side (`app/api/lw/*`).
+
+## 3. NEAR data facts — VERIFIED
+- NEAR JSON-RPC: HTTP POST, one request per call, batches rejected (docs.near.org/api/rpc/providers). No WebSocket subscription method is documented there.
+- QuickNode NEAR: testnet + mainnet, HTTPS + WSS, archival, `tx` / `EXPERIMENTAL_tx_status` (quicknode.com/docs/near). QuickNode Streams for NEAR: **not confirmed** → not used.
+- Neardata (FastNear): `GET /v0/block/<height>` returns the finalized block and **waits** if the block is near the tip (long-poll); `/v0/last_block/final`; each block is one JSON incl. `tx_hash` for receipts; public limit 180 req/min/IP; `?apiKey=` for higher limits (neardata.xyz). NEAR Lake is deprecated (docs.near.org/data-infrastructure).
+
+---
+
+## 4. GATES — verify before coding
+
+| Gate | Question | Source |
+|---|---|---|
+| A1 | Neardata **testnet** host URL | neardata.xyz / github.com/fastnear/neardata-server |
+| A2 | How a NEP-141 transfer appears in a block: `ft_transfer` receipt args and/or NEP-297 `EVENT_JSON` `ft_transfer` log (fields, `memo`) | docs.near.org/primitives/ft/standard , docs.near.org/integrations/fungible-tokens , docs.near.org/integrations/deposits |
+| A3 | Finality: which block/outcome state counts as final for recording | docs.near.org/integrations/blocks-and-finality |
+| A4 | Testnet USDC contract id + decimals (same value as the paywall's G2) | as paywall G2 |
+| A5 | NEAR CAIP-2 id (same as paywall G4) | CAIP registry. **Resolved by paywall G4**: `near:testnet` / `near:mainnet` (the only ids `@x402/near` accepts) are near-watch's defaults; `NEAR_CAIP2_<NET>` is an optional override |
+| A6 | Explorer URL patterns for tx/account links on testnet | the explorer's own docs |
+
+---
+
+## 5. Architecture
+
+```
+ chainiam-private-ai paywall ──POST /ingest/claim (ingest key)──┐
+                                                                ▼
+ ┌──────────────────────────── services/near-watch ───────────────────────────┐
+ │ feeds/neardata.ts      long-poll blocks  ──┐                               │
+ │ feeds/quicknode-rpc.ts JSON-RPC poll      ──┼─► decode.ts (NEP-141 to       │
+ │ feeds/rpc-poll.ts      public fallback    ──┘   watched pay-to / tenants)   │
+ │ backfill.ts  cursor → tip on start/reconnect (QuickNode archival)          │
+ │ store.ts (SQLite) · reconcile.ts · seller.ts · alerts.ts · metrics.ts      │
+ │ server.ts  /api/*  SSE /stream   (admin key)                               │
+ └───────────────────────────────┬────────────────────────────────────────────┘
+                                 ▼
+ apps/admin-console (Next.js) — server-side proxy holds ADMIN_API_KEY
+   tabs: Live ops · Ledger · Reconcile · Feeds · Seller wallet
+   [step 4] Wallets · Policy · Attestation  (via services/custody → OutLayer TEE)
+```
+
+### 5.1 Recording rule (to be finalised by A2/A3)
+A row is an **x402 NEAR payment** only when all hold: transfer executed successfully and final; token contract == `NEAR_USDC_CONTRACT`; receiver == a watched `payto`; the receipt is a single `ft_transfer` with exactly one NEP-141 transfer event. **No memo is required or read**: the x402 NEAR exact scheme's transfer is `ft_transfer {receiver_id, amount}` inside a NEP-366 delegate and defines no memo (chainiam-private-ai `docs/NEAR-GATES.md` G3; the live payment `H3ZFsVY1zDSQKsL3dktYBcNHSLiE8GpR5JtytFLjnbqD` has none). A memo, when present, is kept as data only. Other transfers to the pay-to are listed as `unwatched` / `manual`, never counted — same policy as ledger-watch `seller.ts`.
+
+### 5.2 Roads
+| Road | Adapter | Kind |
+|---|---|---|
+| `neardata` | `feeds/neardata.ts` | long-poll by height (push-like) |
+| `qn-rpc` | `feeds/quicknode-rpc.ts` | poll `block`/`chunk` every `--poll-sec` |
+| `rpc` | `feeds/rpc-poll.ts` | public fallback |
+| `backfill` | `backfill.ts` | from stored cursor after (re)start |
+Road names are stored in SQLite and never renamed. A network reset (height far below stored cursor, `--reset-blocks`) stops the road with alert `network_reset`, as in ledger-watch.
+
+### 5.3 Claims & reconcile
+Same claim contract as ledger-watch (`payment_settled` line with `invoiceId`). Join claim ↔ chain transfer by **(network, tx hash) only** (base58, exact). The claim's `invoiceId` is shown when the claim has it and is never compared with a memo (an x402 NEAR transfer has none, chainiam-private-ai `docs/NEAR-GATES.md` G3). Amount (base units), payer and token are compared. States and alerts identical to ledger-watch; grace counted in final blocks (`--settle-grace-blocks`).
+
+---
+
+## 6. File structure
+
+```
+chainaim-adminUI-NEAR/
+├── README.md  HACKATHON-DISCLOSURE.md  LICENSE  SETUP-COMMANDS.md  .env.example  .gitignore
+├── docs/NEAR-GATES.md                 # answers to A1–A6 with source URLs
+├── packages/chain-core/src/
+│   ├── caip.ts  money.ts  redact.ts  signer.ts (interface only; used in step 4)
+├── services/near-watch/
+│   ├── src/config.ts  main.ts  server.ts
+│   ├── src/feeds/adapter.ts  neardata.ts  quicknode-rpc.ts  rpc-poll.ts
+│   ├── src/backfill.ts  tx-status.ts  decode.ts
+│   ├── src/store.ts  reconcile.ts  claims.ts  seller.ts  alerts.ts  metrics.ts  links.ts
+│   ├── scripts/record-fixture.ts      # records REAL testnet blocks/txs as test fixtures
+│   └── test/  near-rpc-double.ts  neardata-double.ts  *.test.ts
+├── apps/admin-console/
+│   ├── app/api/watch/[...path]/route.ts   app/api/watch/stream/route.ts
+│   ├── components/tabs/live-ops.tsx  ledger.tsx  reconcile.tsx  feeds.tsx
+│   ├── components/seller-wallet.tsx  flow-canvas.tsx  charts.tsx
+│   ├── hooks/use-live.ts  use-poll.ts
+│   └── lib/config.ts  proxy.ts  types.ts  format.ts
+├── services/custody/                   # STEP 4 (TEE) — do not build yet
+├── test-console/start-live.ps1  stack.ps1
+└── data/                               # gitignored
+```
+
+### 6.1 near-watch flags (defaults)
+`--network testnet` · `--feeds neardata,qn-rpc,rpc` · `--quicknode-http-env QUICKNODE_NEAR_HTTP_TESTNET` · `--rpc-fallback-url` (required if `rpc` road on) · `--neardata-url` (A1) · `--neardata-api-key-env` (optional) · `--poll-sec 2` · `--backfill on` · `--settle-grace-blocks` · `--reset-blocks` · `--bind 127.0.0.1 --port 8790` · `--store ../../data/near-watch/watch.sqlite` · `--watch label=role=account` · `--ingest-key-env NEAR_WATCH_INGEST_KEY` · `--explorer` (A6).
+
+### 6.2 Env (names only)
+`ADMIN_API_KEY`, `NEAR_WATCH_INGEST_KEY`, `QUICKNODE_NEAR_HTTP_TESTNET`, `QUICKNODE_NEAR_WSS_TESTNET` (stored, unused until push confirmed), `NEAR_PAY_TO_TESTNET`, `NEAR_USDC_CONTRACT_TESTNET`, `NEARDATA_API_KEY` (optional).
+
+---
+
+## 7. Tests
+- Protocol doubles in `test/` serve **recorded real testnet** blocks/transactions captured by `scripts/record-fixture.ts` (not hand-invented shapes).
+- Store migrations, first-road-wins, reconcile state machine, reset detection, redaction.
+- Live acceptance on testnet (§9).
+
+## 8. Step 4 — TEE custody (deferred; verified facts for later)
+OutLayer Agent Custody (hackathon partner): agent holds only an API key (`wk_…`); key derivation, signing and policy evaluation run inside Intel TDX; master secret from the NEAR MPC network; policy (per-tx/hourly/daily limits, whitelist, rate limit, multisig, freeze) stored encrypted on chain. `POST /register` returns `api_key` + implicit `near_account_id`. Testnet base URL `https://testnet-api.outlayer.ai`; transfer, `call`, balance, policy work on testnet; Intents routes are mainnet-only. Cumulative caps are best-effort under concurrency → serialize agent payments. Source: app.outlayer.ai/docs/agent-custody. In step 4, `services/custody` implements the `chain-core` signer interface against `/wallet/v1/call` and replaces the dev signer in the private-ai scripts.
+
+## 9. Acceptance criteria
+1. With the paywall on `PAY_RAILS=near` (testnet), one real paid call appears in the console as a `claim` and as a chain transfer, and reconciles to `matched` within the grace window.
+2. Killing the neardata road still records the transfer via `qn-rpc`; `/api/feeds` shows which road won and lags.
+3. Restarting near-watch backfills from the stored cursor with no duplicates.
+4. A claim with no chain transfer becomes `only_in_log` after grace; an x402 USDC transfer to pay-to (no memo needed) with no claim becomes `only_on_ledger`.
+5. No secret or token-bearing URL appears in logs, API responses or the browser.
+6. README "do X → see Y" steps reproduce 1–4 on a fresh machine.

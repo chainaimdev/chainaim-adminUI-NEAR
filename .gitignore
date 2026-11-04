@@ -1,0 +1,25 @@
+# secrets and runtime data: never commit
+.env
+.env.*
+!.env.example
+*.env
+secrets/
+data/
+# deps / build
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+# local tooling
+.claude/
+.vercel/
+
+# extra safety
+*.pem
+*.key
+*.log
+dist/
+build/
+coverage/
+.DS_Store
+Thumbs.db
