@@ -3,11 +3,14 @@
  * Joins: claim <-> transfer by (network, tx hash); trace <-> claim by invoice id; trace <-> transfer through the claim
  * (or the trace's own tx hash). An x402 NEAR transfer has no memo, so the chain never names the invoice.
  * Every new claim and trace is streamed; repeats are accepted and dropped, so a sender may retry safely.
+ * Paid jobs (architecture-adminui-jobs.md ARCH-206/207): job events in through ingestJob, joined to claims by the
+ * job's release route (src/jobs.ts); the relayer's gas alert (ARCH-209) sits beside low_calls.
  */
-import { AlertGate, LowCallsRule } from "./alerts.ts";
+import { AlertGate, LowCallsRule, LowGasRule } from "./alerts.ts";
 import { IngestError, parseClaim, type CaipMap } from "./claims.ts";
 import type { Row } from "./decode.ts";
 import type { Bus, TxEvent } from "./events.ts";
+import { JobBook } from "./jobs.ts";
 import { computeMetrics, type Metrics } from "./metrics.ts";
 import { Reconciler } from "./reconcile.ts";
 import type { ClaimRow, ClaimSource, ReconState, Store, StoredTx, TraceRow } from "./store.ts";
@@ -27,6 +30,10 @@ export type LiveOpsOptions = {
   alertEverySec: number;
   paywallLogFile: string | null;
   paywallLogPollMs: number;
+  /** ARCH-209: NEAR one x402 payment costs the relayer (--gas-per-payment-near); null/absent = no relayer gas rule. */
+  gasPerPaymentNear?: string | null;
+  /** ARCH-209: low_gas below this many payments (--relayer-min-payments). */
+  relayerMinPayments?: number;
   now?: () => number;
 };
 
@@ -36,6 +43,7 @@ export type TraceView = { invoiceId: string; steps: (TraceRow & { name: string }
 export class LiveOps {
   readonly reconciler: Reconciler;
   readonly tail: FileTail | null;
+  readonly jobs: JobBook;
   readonly counters = { claims: 0, claimRepeats: 0, traces: 0, traceRepeats: 0, refused: 0 };
   private readonly store: Store;
   private readonly bus: Bus;
@@ -45,6 +53,7 @@ export class LiveOps {
   private readonly labels = new Map<string, Map<string, string>>();
   private readonly gate: AlertGate;
   private readonly lowCalls: LowCallsRule;
+  private readonly lowGas: LowGasRule | null;
   private timer: NodeJS.Timeout | null = null;
   private offs: (() => void)[] = [];
 
@@ -60,6 +69,8 @@ export class LiveOps {
     this.reconciler = new Reconciler(store, bus, { networks: opts.networks, payTo: this.payTo, graceBlocks: opts.graceBlocks, batch: opts.reconcileBatch, now: this.now });
     this.gate = new AlertGate(bus, opts.alertEverySec, this.now);
     this.lowCalls = new LowCallsRule(bus, opts.lowCalls);
+    this.lowGas = opts.gasPerPaymentNear ? new LowGasRule(bus, { gasPerPaymentNear: opts.gasPerPaymentNear, minPayments: opts.relayerMinPayments ?? 500, everySec: opts.alertEverySec, now: this.now }) : null;
+    this.jobs = new JobBook(store, bus, { caips: opts.caips, networks: opts.networks, now: this.now });
     this.tail = opts.paywallLogFile
       ? new FileTail(store, { path: opts.paywallLogFile, pollMs: opts.paywallLogPollMs, onLine: (line) => this.ingestLine(line), onProblem: (level, code, message) => this.gate.alert(level, code, message) })
       : null;
@@ -95,6 +106,7 @@ export class LiveOps {
     this.counters.claims += 1;
     this.bus.emit("claim", { claim });
     this.reconciler.onClaim(claim);
+    this.jobs.onClaim(claim);
     return { ok: true, isNew: true };
   }
 
@@ -114,6 +126,18 @@ export class LiveOps {
     this.counters.traces += 1;
     this.bus.emit("trace", { trace, stepName: TRACE_STEPS[trace.step], txHash: this.store.txByInvoice(trace.invoiceId)?.row.hash ?? null });
     return { ok: true, isNew: true };
+  }
+
+  /** One paid-job event (ARCH-206): stored, or refused whole and alerted job_refused. */
+  ingestJob(input: unknown): IngestResult {
+    let r: { isNew: boolean };
+    try {
+      r = this.jobs.ingest(input);
+    } catch (e) {
+      if (!(e instanceof IngestError)) throw e;
+      return this.refuse("job_refused", `job: ${e.message}`);
+    }
+    return { ok: true, isNew: r.isNew };
   }
 
   private refuse(code: string, message: string): IngestResult {
@@ -162,9 +186,13 @@ export class LiveOps {
               this.gate.alert("error", "reconcile_error", (e as Error).message);
             }
           });
+        } else if (name === "reconcile") {
+          const r = data as { network: string; hash: string };
+          this.jobs.onReconcile(r.network, r.hash);
         }
       }),
       this.lowCalls.attach(),
+      ...(this.lowGas ? [this.lowGas.attach()] : []),
     );
     this.tail?.start();
     const pass = (): void => {

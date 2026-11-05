@@ -179,6 +179,8 @@ tr.gap td:first-child { box-shadow: inset 4px 0 0 var(--bad); }
 tr.unacc td:first-child { box-shadow: inset 4px 0 0 var(--warn); }
 tr.off td { color: var(--muted); }
 .st { font-weight: 600; } .st.matched { color: var(--ok); } .st.pending { color: var(--muted); } .st.only_in_log, .st.mismatch { color: var(--bad); } .st.only_on_ledger { color: var(--warn); }
+.st.released { color: var(--ok); } .st.paid { color: var(--accent2); } .st.quoted { color: var(--muted); } .st.expired { color: var(--warn); }
+.chip.off { opacity: 0.45; } .chip.done b { color: var(--ok); }
 .attn.bad { border-left-color: var(--bad); }
 code { font-family: "IBM Plex Mono", monospace; }
 @media (max-width: 1150px) { .grid { grid-template-columns: 1fr; } .kpis.seven, .kpis.six { grid-template-columns: repeat(3, minmax(0, 1fr)); } .kpis.four { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

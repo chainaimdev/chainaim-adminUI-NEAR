@@ -8,6 +8,9 @@
  *   traces  one row per (invoice_id, step): a buyer-side step the rig reported
  *   recon   one row per (network, hash): the reconcile state of a claim and/or chain transfer
  *   meta    schema, reconcile start block per network, the paywall log tail offset
+ *   jobs    one row per paid job (architecture-adminui-jobs.md ARCH-206): its state, quote, steps and the tx hash of the
+ *           claim that paid it; created only when job events or job claims arrive (CREATE IF NOT EXISTS, no other
+ *           table changes, so the schema version stays 2)
  * A transfer is tied to an invoice only through its claim (same network and tx hash): an x402 NEAR transfer carries
  * no memo (chainiam-private-ai docs/NEAR-GATES.md G3), so the chain side has no invoice of its own.
  * Schema 2 (from 1): txs.invoice_id is gone, and stored rows are re-judged by the memo-free x402 rule (migrate1to2).
@@ -19,6 +22,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Row } from "./decode.ts";
+import type { JobBreakdown, JobStep } from "./jobs.ts";
 
 export const SCHEMA_VERSION = 2;
 
@@ -62,6 +66,34 @@ export const RECON_STATES = ["matched", "pending", "only_in_log", "only_on_ledge
 export type ReconState = (typeof RECON_STATES)[number];
 export type ReconSide = "log" | "ledger";
 export type ReconRow = { network: string; hash: string; state: ReconState; side: ReconSide; invoiceId: string | null; detail: string | null; sinceMs: number; updatedMs: number };
+
+export type JobState = "quoted" | "paid" | "released" | "expired";
+/** A paid job (src/jobs.ts). quotedMs null = made from a claim alone (no job_quoted seen). Amount in USDC base units. */
+export type JobRow = {
+  jobId: string;
+  network: string;
+  state: JobState;
+  amount: string | null;
+  totalUsd: string | null;
+  quotedMs: number | null;
+  expiresMs: number | null;
+  paidMs: number | null;
+  releasedMs: number | null;
+  expiredMs: number | null;
+  txHash: string | null;
+  breakdown: JobBreakdown | null;
+  steps: JobStep[] | null;
+  receivedMs: number;
+};
+type JobDb = {
+  job_id: string; network: string; state: string; amount: string | null; total_usd: string | null; quoted_ms: number | null; expires_ms: number | null;
+  paid_ms: number | null; released_ms: number | null; expired_ms: number | null; tx_hash: string | null; breakdown_json: string | null; steps_json: string | null; received_ms: number;
+};
+const toJob = (r: JobDb): JobRow => ({
+  jobId: r.job_id, network: r.network, state: r.state as JobState, amount: r.amount, totalUsd: r.total_usd, quotedMs: r.quoted_ms, expiresMs: r.expires_ms,
+  paidMs: r.paid_ms, releasedMs: r.released_ms, expiredMs: r.expired_ms, txHash: r.tx_hash,
+  breakdown: r.breakdown_json === null ? null : (JSON.parse(r.breakdown_json) as JobBreakdown), steps: r.steps_json === null ? null : (JSON.parse(r.steps_json) as JobStep[]), receivedMs: r.received_ms,
+});
 
 /** How a transfer arrived. Stored as text and never renamed (DESIGN §5.2). */
 export type Road = "neardata" | "qn-rpc" | "rpc" | "backfill";
@@ -124,6 +156,15 @@ export class Store {
         invoice_id TEXT, detail TEXT, since_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL,
         PRIMARY KEY (network, hash));
       CREATE INDEX IF NOT EXISTS recon_state ON recon (network, state);
+    `);
+    // Paid jobs (ARCH-206): a new table only; the tables above are not altered.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS jobs (
+        job_id TEXT PRIMARY KEY, network TEXT NOT NULL, state TEXT NOT NULL, amount TEXT, total_usd TEXT,
+        quoted_ms INTEGER, expires_ms INTEGER, paid_ms INTEGER, released_ms INTEGER, expired_ms INTEGER, tx_hash TEXT,
+        breakdown_json TEXT, steps_json TEXT, received_ms INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS jobs_tx ON jobs (network, tx_hash);
+      CREATE INDEX IF NOT EXISTS jobs_received ON jobs (received_ms);
     `);
     const v = this.db.prepare("SELECT value FROM meta WHERE key = 'schema'").get() as { value: string } | undefined;
     if (!v) this.db.prepare("INSERT INTO meta (key, value) VALUES ('schema', ?)").run(String(SCHEMA_VERSION));
@@ -474,6 +515,62 @@ export class Store {
   recentRecon(limit: number, state?: ReconState): ReconRow[] {
     const rows = state ? this.db.prepare("SELECT * FROM recon WHERE state = ? ORDER BY updated_ms DESC LIMIT ?").all(state, limit) : this.db.prepare("SELECT * FROM recon ORDER BY updated_ms DESC LIMIT ?").all(limit);
     return (rows as ReconDb[]).map(toRecon);
+  }
+
+  // ---- paid jobs (ARCH-206) ----
+
+  getJob(jobId: string): JobRow | undefined {
+    const r = this.db.prepare("SELECT * FROM jobs WHERE job_id = ?").get(jobId) as JobDb | undefined;
+    return r ? toJob(r) : undefined;
+  }
+
+  jobByTx(network: string, hash: string): JobRow | undefined {
+    const r = this.db.prepare("SELECT * FROM jobs WHERE network = ? AND tx_hash = ?").get(network, hash) as JobDb | undefined;
+    return r ? toJob(r) : undefined;
+  }
+
+  putJob(j: JobRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO jobs (job_id, network, state, amount, total_usd, quoted_ms, expires_ms, paid_ms, released_ms, expired_ms, tx_hash, breakdown_json, steps_json, received_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (job_id) DO UPDATE SET state = excluded.state, amount = excluded.amount, total_usd = excluded.total_usd, quoted_ms = excluded.quoted_ms,
+           expires_ms = excluded.expires_ms, paid_ms = excluded.paid_ms, released_ms = excluded.released_ms, expired_ms = excluded.expired_ms,
+           tx_hash = excluded.tx_hash, breakdown_json = excluded.breakdown_json, steps_json = excluded.steps_json`,
+      )
+      .run(j.jobId, j.network, j.state, j.amount, j.totalUsd, j.quotedMs, j.expiresMs, j.paidMs, j.releasedMs, j.expiredMs, j.txHash, j.breakdown === null ? null : JSON.stringify(j.breakdown), j.steps === null ? null : JSON.stringify(j.steps), j.receivedMs);
+  }
+
+  hasJobs(): boolean {
+    return this.db.prepare("SELECT 1 FROM jobs LIMIT 1").get() !== undefined;
+  }
+
+  /** Newest first (by when near-watch first heard of the job). */
+  recentJobs(limit: number, network?: string, state?: JobState): JobRow[] {
+    const where: string[] = [];
+    const args: (string | number)[] = [];
+    if (network) (where.push("network = ?"), args.push(network));
+    if (state) (where.push("state = ?"), args.push(state));
+    const sql = `SELECT * FROM jobs ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY received_ms DESC, job_id LIMIT ?`;
+    return (this.db.prepare(sql).all(...args, limit) as JobDb[]).map(toJob);
+  }
+
+  jobCounts(network?: string): Record<JobState, number> {
+    const out: Record<JobState, number> = { quoted: 0, paid: 0, released: 0, expired: 0 };
+    const rows = (network ? this.db.prepare("SELECT state, COUNT(*) AS n FROM jobs WHERE network = ? GROUP BY state").all(network) : this.db.prepare("SELECT state, COUNT(*) AS n FROM jobs GROUP BY state").all()) as { state: JobState; n: number }[];
+    for (const r of rows) if (r.state in out) out[r.state] = r.n;
+    return out;
+  }
+
+  /** The quote breakdowns of expired jobs on `network` (lost compute, src/jobs.ts). */
+  expiredBreakdowns(network: string): JobBreakdown[] {
+    return (this.db.prepare("SELECT breakdown_json FROM jobs WHERE network = ? AND state = 'expired' AND breakdown_json IS NOT NULL").all(network) as { breakdown_json: string }[]).map((r) => JSON.parse(r.breakdown_json) as JobBreakdown);
+  }
+
+  /** The claim whose route is `route` (a job's release route), oldest first. */
+  claimByRoute(network: string, route: string): ClaimRow | undefined {
+    const r = this.db.prepare("SELECT * FROM claims WHERE network = ? AND route = ? ORDER BY ts_ms LIMIT 1").get(network, route) as ClaimDb | undefined;
+    return r ? toClaim(r) : undefined;
   }
 
   close(): void {

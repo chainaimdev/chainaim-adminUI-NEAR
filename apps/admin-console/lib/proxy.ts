@@ -22,6 +22,9 @@ export const ALLOWED_ROUTES: Readonly<Record<string, 1 | 2>> = {
   seller: 1,
   tx: 2,
   trace: 2,
+  // Paid jobs (architecture-adminui-jobs.md ARCH-210): /api/jobs and /api/job/<jobId>.
+  jobs: 1,
+  job: 2,
 };
 
 /** Query keys near-watch reads; anything else is refused rather than silently dropped. */

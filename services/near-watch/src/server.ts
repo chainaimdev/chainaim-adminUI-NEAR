@@ -17,6 +17,11 @@
  *   GET /api/trace/<invoiceId>          every step, claim, ledger payment and reconcile state of one call
  *   POST /ingest/claim                  one payment_settled line, or a list of up to 100
  *   POST /ingest/trace                  one rig trace step, or a list of up to 100
+ * Paid jobs (architecture-adminui-jobs.md ARCH-206..208; src/jobs.ts):
+ *   POST /ingest/job                    one job event (job_quoted / job_released / job_expired), or a list of up to 100
+ *   GET /api/jobs?limit=&network=&state=   jobs newest first, counts per state, lost compute
+ *   GET /api/job/<jobId>                one job: steps, breakdown, linked claim, transfer and reconcile state
+ *   The snapshot carries `jobs` only once a job exists.
  * Seller Wallet (when started with it): GET /api/seller (src/seller.ts) and `seller` in the snapshot.
  * Every /api and /stream call needs the admin key, sent as
  * `x-admin-key: <key>` or `authorization: Bearer <key>`; the console's server
@@ -34,7 +39,8 @@ import type { Links } from "./links.ts";
 import type { IngestResult, LiveOps } from "./liveops.ts";
 import type { Roads } from "./roads.ts";
 import type { SellerBook } from "./seller.ts";
-import { RECON_STATES, type ReconState, type Store } from "./store.ts";
+import { JOB_STATES } from "./jobs.ts";
+import { RECON_STATES, type JobState, type ReconState, type Store } from "./store.ts";
 import type { WatchEntry } from "./watchlist.ts";
 import { isNearHash } from "../../../packages/chain-core/src/near.ts";
 
@@ -154,10 +160,10 @@ export class WatchServer {
     });
   }
 
-  /** POST /ingest/claim and /ingest/trace. */
+  /** POST /ingest/claim, /ingest/trace and /ingest/job. */
   private async ingest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const path = new URL(req.url ?? "/", "http://near-watch.local").pathname;
-    const kind = path === "/ingest/claim" ? "claim" : path === "/ingest/trace" ? "trace" : null;
+    const kind = path === "/ingest/claim" ? "claim" : path === "/ingest/trace" ? "trace" : path === "/ingest/job" ? "job" : null;
     const ingestKey = this.opts.ingestKey ?? null;
     if (!kind || !this.ops || !ingestKey) {
       req.resume();
@@ -187,7 +193,7 @@ export class WatchServer {
     const items = Array.isArray(body) ? body : [body];
     if (items.length === 0 || items.length > INGEST_MAX_ITEMS) return json(res, 400, { error: `send 1 to ${INGEST_MAX_ITEMS} records` });
     const ops = this.ops;
-    const results: IngestResult[] = items.map((item) => (kind === "claim" ? ops.ingestClaim(item, "http") : ops.ingestTrace(item)));
+    const results: IngestResult[] = items.map((item) => (kind === "claim" ? ops.ingestClaim(item, "http") : kind === "job" ? ops.ingestJob(item) : ops.ingestTrace(item)));
     const refused = results.flatMap((r, index) => (r.ok ? [] : [{ index, error: r.error }]));
     const accepted = results.filter((r) => r.ok && r.isNew).length;
     const repeats = results.filter((r) => r.ok && !r.isNew).length;
@@ -195,6 +201,7 @@ export class WatchServer {
   }
 
   snapshot(): Record<string, unknown> {
+    const jobs = this.ops?.jobs.snapshot(Math.min(this.opts.sseReplay, 500)) ?? null;
     return {
       version: this.opts.version,
       ...(this.opts.token ? { token: this.opts.token } : {}),
@@ -210,6 +217,7 @@ export class WatchServer {
       counters: this.roads.counters,
       ...(this.ops ? { liveOps: this.ops.snapshot(Math.min(this.opts.sseReplay, 500)) } : {}),
       ...(this.seller ? { seller: this.seller.compute() } : {}),
+      ...(jobs ? { jobs } : {}),
     };
   }
 
@@ -247,6 +255,22 @@ export class WatchServer {
       if (url.pathname === "/api/metrics") return json(res, 200, this.ops.metrics());
       const t = /^\/api\/trace\/([A-Za-z0-9._:-]{1,128})$/.exec(url.pathname);
       if (t) return json(res, 200, this.ops.traceView(t[1]));
+      if (url.pathname === "/api/jobs") {
+        const state = url.searchParams.get("state");
+        if (state !== null && !(JOB_STATES as readonly string[]).includes(state)) return json(res, 400, { error: `state must be one of ${JOB_STATES.join(", ")}` });
+        const network = url.searchParams.get("network") ?? undefined;
+        const book = this.ops.jobs;
+        return json(res, 200, { ...book.summary(network), jobs: this.store.recentJobs(limit(100), network, (state ?? undefined) as JobState | undefined).map((j) => book.view(j)) });
+      }
+      const j = /^\/api\/job\/([^/]+)$/.exec(url.pathname);
+      if (j) {
+        const job = /^[0-9a-f]{32}$/.test(j[1]) ? this.store.getJob(j[1]) : undefined;
+        if (!job) return json(res, 404, { error: "no such job" });
+        const claim = job.txHash ? (this.store.getClaim(job.network, job.txHash) ?? null) : null;
+        const tx = job.txHash ? this.store.getTx(job.network, job.txHash) : undefined;
+        const recon = job.txHash ? this.store.getRecon(job.network, job.txHash) : undefined;
+        return json(res, 200, { job: this.ops.jobs.view(job), claim, tx: tx ? this.withLinks(tx) : null, reconcile: recon ? { state: recon.state, detail: recon.detail } : null });
+      }
     }
     const m = /^\/api\/tx\/([1-9A-HJ-NP-Za-km-z]{43,44})$/.exec(url.pathname);
     if (m && isNearHash(m[1])) {

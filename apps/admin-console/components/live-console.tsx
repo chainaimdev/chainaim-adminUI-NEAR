@@ -5,7 +5,7 @@
  *   /api/watch/stream    every live event (hooks/use-live.ts)
  *   /api/watch/metrics   every 10 s, KPIs (hello carries a first copy)
  *   /api/watch/feeds     every 5 s, flow lanes, token decimals, Feeds tab
- * Tabs (DESIGN §5): Live ops · Ledger · Reconcile · Feeds · Seller wallet. liveops' Lending tab is dropped (XRPL Devnet
+ * Tabs (DESIGN §5): Live ops · Ledger · Reconcile · Jobs (paid jobs, architecture-adminui-jobs.md ARCH-210) · Feeds · Seller wallet. liveops' Lending tab is dropped (XRPL Devnet
  * lending has no NEAR counterpart). The selected tab is kept in the URL (#reconcile, …) so a link opens the same view.
  */
 import { useEffect, useState } from "react";
@@ -18,12 +18,13 @@ import type { FeedsReport, Metrics } from "../lib/types.ts";
 import { FeedChips } from "./feed-chips.tsx";
 import { SellerWalletTab } from "./seller-wallet.tsx";
 import { FeedsTab } from "./tabs/feeds.tsx";
+import { JobsTab } from "./tabs/jobs.tsx";
 import { LedgerTab } from "./tabs/ledger.tsx";
 import { LiveOpsTab } from "./tabs/live-ops.tsx";
 import { ReconcileTab } from "./tabs/reconcile.tsx";
 import { ThemeToggle } from "./theme-toggle.tsx";
 
-export const TABS = ["Live ops", "Ledger", "Reconcile", "Feeds", "Seller wallet"] as const;
+export const TABS = ["Live ops", "Ledger", "Reconcile", "Jobs", "Feeds", "Seller wallet"] as const;
 type Tab = (typeof TABS)[number];
 const slug = (t: Tab): string => t.toLowerCase().replace(/\s+/g, "-");
 const fromHash = (h: string): Tab => TABS.find((t) => `#${slug(t)}` === h) ?? "Live ops";
@@ -117,6 +118,8 @@ export function LiveConsole() {
           <LedgerTab live={live} />
         ) : tab === "Reconcile" ? (
           <ReconcileTab live={live} decimalsOf={decimalsOf} grace={Object.fromEntries(Object.entries(feeds?.networks ?? {}).map(([n, f]) => [n, f.reconcile]))} />
+        ) : tab === "Jobs" ? (
+          <JobsTab live={live} decimalsOf={decimalsOf} />
         ) : tab === "Feeds" ? (
           <FeedsTab live={live} feeds={feeds} error={feedsPoll.error} now={now} />
         ) : (

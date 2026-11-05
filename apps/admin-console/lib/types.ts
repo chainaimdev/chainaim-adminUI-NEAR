@@ -186,7 +186,38 @@ export type Snapshot = {
   seller?: SellerEvent;
   /** The token near-watch counts (from ft_metadata at its start-up). */
   token?: { contract: string; symbol: string; decimals: number };
+  /** Paid jobs (architecture-adminui-jobs.md ARCH-208): present only once near-watch holds a job. */
+  jobs?: { counts: Record<JobState, number>; recent: JobView[]; lostCompute: Record<string, string> };
 };
+
+/** Paid jobs (near-watch src/jobs.ts). Ids, times, amounts, model ids, zones and counts only: no text is ever sent. */
+export const JOB_STATES = ["quoted", "paid", "released", "expired"] as const;
+export type JobState = (typeof JOB_STATES)[number];
+export type JobStep =
+  | { name: "analyst"; ms: number; files: number; relations: number }
+  | {
+      name: "query" | "answer"; ms: number; model: string; zone: string | null; promptTokens: number; completionTokens: number; usd: string;
+      entityCounts: Record<string, number> | null; residual: "pass" | "refused" | null;
+    }
+  | { name: "sql"; ms: number; rows: number };
+export type JobBreakdown = {
+  calls: { model: string; promptTokens: number; completionTokens: number; usd: string }[];
+  modelUsd: string; callFeesUsd: string; analystUsd: string; nearGasUsd: string; marginPct: string; minPriceUsd: string; minApplied: boolean;
+  /** Before the margin, and with the margin before the minimum; absent for jobs quoted before they were reported. */
+  subtotalUsd?: string; withMarginUsd?: string;
+};
+export type JobView = {
+  jobId: string; network: string; state: JobState;
+  /** USDC base units (6 decimals) and the same total in USD; null for a job known only from its claim. */
+  amount: string | null; totalUsd: string | null;
+  quotedMs: number | null; expiresMs: number | null; paidMs: number | null; releasedMs: number | null; expiredMs: number | null;
+  txHash: string | null; breakdown: JobBreakdown | null; steps: JobStep[] | null; receivedMs: number;
+  /** A claim paid this job but near-watch never received its job_quoted. */
+  noJobEvent: boolean;
+  invoiceId: string | null; payer: string | null; reconcile: ReconState | null;
+};
+export type JobsSummary = { counts: Record<JobState, number>; lostCompute: Record<string, string> };
+export type JobEvent = { job: JobView; summary: JobsSummary };
 
 export type TxEvent = { row: Row; via: Road; lagMs: number | null; network?: string; links?: Links };
 export type RoadEvent = { network: string; hash: string; via: Road; lagMs: number; firstVia: Road };
@@ -207,10 +238,11 @@ export type EventMap = {
   trace: TraceEvent;
   reconcile: ReconcileEvent;
   seller: SellerEvent;
+  job: JobEvent;
 };
 export type EventName = keyof EventMap;
 
-export const EVENT_NAMES: readonly EventName[] = ["hello", "ledger", "tx", "road", "balances", "status", "alert", "claim", "trace", "reconcile", "seller"];
+export const EVENT_NAMES: readonly EventName[] = ["hello", "ledger", "tx", "road", "balances", "status", "alert", "claim", "trace", "reconcile", "seller", "job"];
 
 /** /api/feeds (near-watch src/main.ts feedsReport; adapter catalogue from src/feeds/adapter.ts). */
 export type FeedAdapter = { id: string; kind: string; provider: string; built: boolean; description: string; selected: boolean; available: boolean; reason: string | null };

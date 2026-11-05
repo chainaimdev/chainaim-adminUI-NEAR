@@ -12,7 +12,8 @@ The browser never sees near-watch's address, endpoint URLs or the admin key.
 
 | Do | See |
 |---|---|
-| `npm install` then `npm test` | 39 tests pass; proxy / stream / store tests start the real near-watch `WatchServer` on its recorded testnet x402 payment (no memo; matched by tx hash) |
+| `npm install` then `npm test` | 43 tests pass; proxy / stream / store / jobs tests start the real near-watch `WatchServer` on its recorded testnet x402 payment (no memo; matched by tx hash) |
+| open **Jobs** (`#jobs`) | every paid tab 03 job the private-ai console reported: counts per state, lost compute, the job list (time, job, payer, network, total, state, reconcile); for the selected job the step strip, the step table (time, model, zone, tokens in/out, masking counts, residual, cost) and the full breakdown. No text is ever received (architecture-adminui-jobs.md ARCH-210) |
 | `npm run build`, then `node --env-file=<private env> scripts/console.ts --mode start` (near-watch running) | console on http://127.0.0.1:8800 |
 | open **Live ops** | header chip `NEAR TESTNET` (best road, state, final block height) and one chip per road (neardata, qn-rpc, rpc); Seller wallet row; flow canvas; feed race |
 | make one paid call (paywall `PAY_RAILS=near`) | `claim` and `tx` in the change log; the transfer on **Ledger** with the road that won (chip) and later roads `+N ms`; **Reconcile** shows `matched` after the grace |
@@ -37,7 +38,8 @@ The browser never sees near-watch's address, endpoint URLs or the admin key.
 | Console | near-watch |
 |---|---|
 | `GET /api/watch/stream` | `GET /stream` (SSE bytes passed through; leaving the page frees the slot) |
-| `GET /api/watch/{snapshot,txs,feeds,claims,reconcile,metrics,seller}` | `GET /api/...`; query keys `limit`, `network`, `state` only |
+| `GET /api/watch/{snapshot,txs,feeds,claims,reconcile,metrics,seller,jobs}` | `GET /api/...`; query keys `limit`, `network`, `state` only |
+| `GET /api/watch/job/<jobId>` | `GET /api/job/<jobId>` (paid jobs) |
 | `GET /api/watch/{tx,trace}/<id>` | `GET /api/tx/<base58 hash>`, `/api/trace/<invoiceId>` |
 
 Everything else (`/ingest/*`, `/healthz`) is 404; any method but GET is 405. near-watch's 401 becomes 502

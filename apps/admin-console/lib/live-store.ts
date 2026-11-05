@@ -14,6 +14,8 @@
  *   claim      one per (network, hash)   trace      one per (invoice, step), newest first
  *   reconcile  latest state per (network, hash)
  *   seller     replaced (the Seller Wallet figures; hello carries the current ones)
+ *   job        latest per job id, with its network's counts and lost compute (hello.jobs carries the first copy; absent
+ *              until near-watch holds a job: architecture-adminui-jobs.md ARCH-210)
  *
  * NEAR tx hashes are base58 and case-sensitive: keys use the hash exactly as sent (liveops upper-cased XRPL hex).
  *
@@ -27,6 +29,8 @@ import {
   type BalanceEntry,
   type ClaimRow,
   type EventName,
+  type JobState,
+  type JobView,
   type LedgerEvent,
   type Links,
   type Metrics,
@@ -86,6 +90,10 @@ export type LiveState = {
   seller: SellerEvent | null;
   /** hello.token: contract, symbol and decimals near-watch read from ft_metadata; null on an older near-watch. */
   token: { contract: string; symbol: string; decimals: number } | null;
+  /** Paid jobs by job id (hello.jobs.recent, then every `job` event); empty until near-watch holds one. */
+  jobs: Record<string, JobView>;
+  /** Counts per job state and lost compute per network, as near-watch last sent them; null before any job. */
+  jobSummary: { counts: Record<JobState, number>; lostCompute: Record<string, string> } | null;
   counters: unknown;
   stats: Stats;
   roadStats: Record<string, Partial<Record<Road, RoadStat>>>;
@@ -111,6 +119,8 @@ export function emptyState(): LiveState {
     metrics: null,
     seller: null,
     token: null,
+    jobs: {},
+    jobSummary: null,
     counters: null,
     stats: { applied: {}, ignored: {}, errors: 0, lastError: null },
     roadStats: {},
@@ -198,6 +208,22 @@ function asSeller(v: unknown): SellerEvent {
   }
   return v as unknown as SellerEvent;
 }
+const JOB_ID = /^[0-9a-f]{32}$/;
+const JOB_STATE_SET = new Set(["quoted", "paid", "released", "expired"]);
+function asJob(v: unknown): JobView {
+  if (!isObj(v)) throw new Refused("job is not an object");
+  need(typeof v.jobId === "string" && JOB_ID.test(v.jobId), null, "job.jobId is not 32 hex characters");
+  str(v, "network");
+  need(typeof v.state === "string" && JOB_STATE_SET.has(v.state), null, "job.state is not a job state");
+  need(v.amount === null || (typeof v.amount === "string" && UNITS.test(v.amount)), null, "job.amount is not base units");
+  need(v.steps === null || Array.isArray(v.steps), null, "job.steps is not a list");
+  return v as unknown as JobView;
+}
+function asJobSummary(v: unknown): NonNullable<LiveState["jobSummary"]> {
+  need(isObj(v) && isObj(v.counts) && isObj(v.lostCompute), null, "job summary lacks counts or lostCompute");
+  return v as unknown as NonNullable<LiveState["jobSummary"]>;
+}
+
 function networkOf(entry: Record<string, unknown>, row: Row): string {
   const n = typeof entry.network === "string" ? entry.network : row.network;
   return need(typeof n === "string" && n !== "", n as string, "transaction has no network");
@@ -305,6 +331,15 @@ function fromHello(data: unknown, prev: LiveState, limits: Limits): LiveState {
   }
   // The console session (counters, measured lags, change log) survives a reconnect; the data does not.
   s.stats = sellerError === null ? prev.stats : { ...prev.stats, errors: prev.stats.errors + 1, lastError: sellerError };
+  // Paid jobs: only when near-watch holds one (hello.jobs absent otherwise).
+  if (data.jobs !== undefined) {
+    if (!isObj(data.jobs)) throw new Refused("hello.jobs is not an object");
+    for (const j of Array.isArray(data.jobs.recent) ? data.jobs.recent : []) {
+      const job = asJob(j);
+      s.jobs[job.jobId] = job;
+    }
+    s.jobSummary = asJobSummary(data.jobs);
+  }
   const tk = (data as Record<string, unknown>).token;
   s.token = isObj(tk) && typeof tk.contract === "string" && typeof tk.symbol === "string" && Number.isInteger(tk.decimals) ? { contract: tk.contract, symbol: tk.symbol, decimals: tk.decimals as number } : null;
   s.roadStats = prev.roadStats;
@@ -438,6 +473,18 @@ function apply(state: LiveState, name: EventName, data: unknown, limits: Limits)
     }
     case "seller":
       return { ...state, seller: asSeller(data) };
+    case "job": {
+      if (!isObj(data)) throw new Refused("job event is not an object");
+      const job = asJob(data.job);
+      const summary = asJobSummary(data.summary);
+      const before = state.jobs[job.jobId];
+      const jobSummary = { counts: summary.counts, lostCompute: { ...(state.jobSummary?.lostCompute ?? {}), ...summary.lostCompute } };
+      const next = { ...state, jobs: { ...state.jobs, [job.jobId]: job }, jobSummary };
+      if (before?.state === job.state) return next;
+      const at = job.releasedMs ?? job.expiredMs ?? job.paidMs ?? job.quotedMs ?? job.receivedMs;
+      const text = `job ${short(job.jobId, 6, 4)}: ${before?.state ?? "new"} → ${job.state}${job.noJobEvent ? " (no job event)" : ""}${job.totalUsd ? ` · $${job.totalUsd}` : ""}`;
+      return { ...next, ...addRail(state, at, job.state === "expired" ? "warn" : "info", text, job.network, limits) };
+    }
   }
 }
 

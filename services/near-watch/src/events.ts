@@ -1,6 +1,7 @@
 /**
  * The events near-watch streams to the console (SSE contract, same names as liveops ledger-watch):
- * hello, ledger, tx, road, balances, status, alert, claim, trace, reconcile, seller.
+ * hello, ledger, tx, road, balances, status, alert, claim, trace, reconcile, seller, and job (paid jobs, sent only once
+ * a job event or a job's claim arrives: architecture-adminui-jobs.md ARCH-207).
  * `ledger` carries one final NEAR block (index = block height) so the console's strip and the reconcile grace
  * work as they do for XRPL ledgers.
  *
@@ -8,6 +9,7 @@
  */
 import { EventEmitter } from "node:events";
 import type { Row } from "./decode.ts";
+import type { JobView, JobsSummary } from "./jobs.ts";
 import type { SellerWallet } from "./seller.ts";
 import type { ClaimRow, ReconSide, ReconState, Road, TraceRow } from "./store.ts";
 
@@ -48,6 +50,8 @@ export type ClaimEvent = { claim: ClaimRow };
 export type TraceEvent = { trace: TraceRow; stepName: string; txHash: string | null };
 export type ReconcileEvent = { network: string; hash: string; invoiceId: string | null; state: ReconState; previous: ReconState | null; side: ReconSide; detail: string | null; at: number };
 export type SellerEvent = { wallets: SellerWallet[]; at: number };
+/** One job changed (src/jobs.ts): the job as /api/job shows it, and its network's counts and lost compute. */
+export type JobEvent = { job: JobView; summary: JobsSummary };
 
 export type EventMap = {
   ledger: LedgerEvent;
@@ -60,6 +64,7 @@ export type EventMap = {
   trace: TraceEvent;
   reconcile: ReconcileEvent;
   seller: SellerEvent;
+  job: JobEvent;
 };
 export type EventName = keyof EventMap;
 

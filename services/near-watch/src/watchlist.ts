@@ -1,12 +1,13 @@
 /**
  * The accounts near-watch follows, per network:
  *   the paywall's pay-to   env NEAR_PAY_TO_<NETWORK> (label "paywall", role payto, source "paywall")
- *   --watch label=role=account   any number; role is payto | buyer | other (source "flag")
+ *   --watch label=role=account   any number; role is payto | buyer | relayer | other (source "flag"); relayer = the x402
+ *                                facilitator's NEAR gas payer (low_gas alert, architecture-adminui-jobs.md ARCH-209)
  * Account ids are checked with the NEAR account-id rules; a duplicate keeps the first entry.
  */
 import { isAccountId } from "../../../packages/chain-core/src/near.ts";
 
-export const ROLES = ["payto", "buyer", "other"] as const;
+export const ROLES = ["payto", "buyer", "other", "relayer"] as const;
 export type Role = (typeof ROLES)[number];
 export type WatchEntry = { network: string; label: string; role: Role; address: string; source: "paywall" | "flag" };
 

@@ -213,6 +213,7 @@ export async function startApp(config: Config, deps: AppDeps = {}): Promise<App>
     alertEverySec: config.alertEverySec,
     paywallLogFile: config.paywallLogFile,
     paywallLogPollMs: config.paywallLogPollMs,
+    ...(config.gasPerPaymentNear ? { gasPerPaymentNear: config.gasPerPaymentNear, relayerMinPayments: config.relayerMinPayments } : {}),
   });
   const seller = new SellerBook(store, bus, {
     networks: [network],

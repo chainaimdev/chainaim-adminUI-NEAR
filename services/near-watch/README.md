@@ -13,13 +13,17 @@ The first road to deliver a transaction wins. Later roads are stored with their 
 
 ```powershell
 npm install
-npm test                 # 34 tests: decoder, store, reconcile (incl. late arrival), config (CAIP-2 default), RPC read-ahead, chain-core, end-to-end over the recorded-data doubles
+npm test                 # 50 tests: decoder, store, reconcile (incl. late arrival), config (CAIP-2 default), RPC read-ahead, paid jobs, relayer gas, chain-core, end-to-end over the recorded-data doubles
 npx tsc -p .             # typecheck
 node --env-file=$SECRETS\near-watch.env src/main.ts --watch buyer1=buyer=<buyer>.testnet
 node src/main.ts --help  # every flag and its default
 ```
 
-Endpoints: `/healthz`, `/api/snapshot`, `/api/txs`, `/api/tx/<hash>`, `/api/feeds`, `/api/claims`, `/api/reconcile`, `/api/metrics`, `/api/trace/<invoiceId>`, `/api/seller`, SSE `/stream`, and `POST /ingest/claim|trace`.
+Endpoints: `/healthz`, `/api/snapshot`, `/api/txs`, `/api/tx/<hash>`, `/api/feeds`, `/api/claims`, `/api/reconcile`, `/api/metrics`, `/api/trace/<invoiceId>`, `/api/seller`, `/api/jobs`, `/api/job/<jobId>`, SSE `/stream`, and `POST /ingest/claim|trace|job`.
+
+**Paid jobs** (architecture-adminui-jobs.md ARCH-206..208, `src/jobs.ts`). `POST /ingest/job` takes the private-ai test console's `job_quoted` / `job_released` / `job_expired` events (`--job-feed-url` there). Each event is parsed strictly: every field is typed and bounded, unknown fields are refused, and a bad event is refused whole and alerted `job_refused`. So only ids, times, amounts, model ids, zones and counts are stored. A job is joined to the paywall's claim for `POST /v1/jobs/<jobId>/release`, and through it to the transfer and its reconcile state. States: `quoted` → `paid` → `released`, or `expired` if no claim is linked. A claim for a job never quoted here is shown as `paid` with no job event, and raises `job_unknown` once. Lost compute = model cost + call fees + analyst fee of expired jobs. The snapshot has `jobs` and SSE sends `job` only once a job exists. Everything else is unchanged; the new `jobs` table is created with IF NOT EXISTS.
+
+**Relayer gas** (ARCH-209). `--watch relayer=relayer=<account> --gas-per-payment-near D` reads the relayer's NEAR balance like the others. It raises `low_gas` (warn) when that covers fewer than `--relayer-min-payments` payments (default 500), at most once per `--alert-every-sec`. A watched relayer without `--gas-per-payment-near` stops start-up. The Seller wallet and Live ops panels ignore the role.
 
 **Keeping up.** One RPC height is a `block` call plus about 1.8 `chunk` calls, at 270–370 ms each on testnet. Done one after another, that is 770–970 ms per height, while testnet makes a final block every ~580 ms. So the RPC roads read `--rpc-prefetch` heights at once (default 4; 1 = serial; forced to 1 by `--rpc-min-ms`), and still hand them in strictly in height order. Measured live on 2026-11-04, starting 100 blocks behind: fastnear went from 1.53 to 5.17 heights/s, and QuickNode from 1.00 to 4.90/s, against a chain making ~1.7/s.
 

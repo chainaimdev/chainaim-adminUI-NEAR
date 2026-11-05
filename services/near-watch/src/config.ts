@@ -65,6 +65,10 @@ export type Config = {
   explorer: ExplorerConfig;
   callPriceUnits: string | null;
   lowCalls: number;
+  /** ARCH-209: NEAR one x402 payment costs the relayer (decimal string); required when a relayer is watched, else null. */
+  gasPerPaymentNear: string | null;
+  /** ARCH-209: low_gas when the relayer's NEAR covers fewer payments than this. */
+  relayerMinPayments: number;
   reconcileSec: number;
   reconcileBatch: number;
   metricsWindowSec: number;
@@ -110,7 +114,7 @@ paywall's claims, reconciled. Run: node --env-file=<secrets env> src/main.ts [fl
   --reset-blocks N                    tip this far below the cursor = network reset (100000)
   --bind HOST --port N                (127.0.0.1, 8790)
   --store PATH                        (../../data/near-watch/watch.sqlite from the service folder)
-  --watch label=role=account          repeatable; role payto|buyer|other
+  --watch label=role=account          repeatable; role payto|buyer|relayer|other
   --ingest-key-env NAME               (NEAR_WATCH_INGEST_KEY; unset = /ingest off)
   --admin-key-env NAME                (ADMIN_API_KEY)
   --usdc-contract-env NAME            (NEAR_USDC_CONTRACT_<NET>, required)
@@ -120,6 +124,8 @@ paywall's claims, reconciled. Run: node --env-file=<secrets env> src/main.ts [fl
   --explorer-tx-path P                (/txns/{hash})   --explorer-account-path P (/address/{address})
   --call-price UNITS                  one paid call in USDC base units (env NEAR_CALL_PRICE_UNITS; unset = no estimate)
   --low-calls N                       buyer low-balance alert, in calls (3; 0 = off)
+  --gas-per-payment-near D            NEAR one x402 payment costs the relayer (required with a relayer=relayer=... watch)
+  --relayer-min-payments N            low_gas alert below this many payments of relayer gas (500)
   --paywall-log-file PATH             tail the paywall's PAYMENT_LOG_FILE for claims
   --reconcile-sec N (5)  --metrics-window-sec N (3600)  --balances-sec N (30)  --stale-sec N (30)
   --request-timeout-ms N (15000)  --long-poll-ms N (30000)  --neardata-min-ms N (450)  --rpc-min-ms N (0)
@@ -149,7 +155,7 @@ function parseArgv(argv: readonly string[]): Flags {
 }
 
 const KNOWN = new Set(
-  "network feeds quicknode-http-env rpc-fallback-url neardata-url neardata-api-key-env poll-sec backfill backfill-max-blocks backfill-source settle-grace-blocks reset-blocks bind port store watch ingest-key-env admin-key-env usdc-contract-env caip2-env decimals explorer explorer-tx-path explorer-account-path call-price low-calls reconcile-sec reconcile-batch metrics-window-sec alert-every-sec paywall-log-file paywall-log-poll-ms balances-sec stale-sec request-timeout-ms tx-status-timeout-ms long-poll-ms neardata-min-ms rpc-min-ms rpc-prefetch backoff-max-sec sse-replay sse-heartbeat-sec sse-max-clients ingest-max-bytes inflight-expire-sec inflight-estimate seller-recent seller-debounce-ms".split(
+  "network feeds quicknode-http-env rpc-fallback-url neardata-url neardata-api-key-env poll-sec backfill backfill-max-blocks backfill-source settle-grace-blocks reset-blocks bind port store watch ingest-key-env admin-key-env usdc-contract-env caip2-env decimals explorer explorer-tx-path explorer-account-path call-price low-calls reconcile-sec reconcile-batch metrics-window-sec alert-every-sec paywall-log-file paywall-log-poll-ms balances-sec stale-sec request-timeout-ms tx-status-timeout-ms long-poll-ms neardata-min-ms rpc-min-ms rpc-prefetch backoff-max-sec sse-replay sse-heartbeat-sec sse-max-clients ingest-max-bytes inflight-expire-sec inflight-estimate seller-recent seller-debounce-ms gas-per-payment-near relayer-min-payments".split(
     " ",
   ),
 );
@@ -261,6 +267,11 @@ export function loadConfig(argv: readonly string[], env: Record<string, string |
   const callPrice = one("call-price") ?? val("NEAR_CALL_PRICE_UNITS") ?? null;
   if (callPrice !== null && !isUnits(callPrice)) throw new ConfigError("--call-price must be an integer of USDC base units (0.01 USDC = 10000)");
   const sseHeartbeatSec = int("sse-heartbeat-sec", 15, 1, 300);
+  // ARCH-209: a watched relayer needs the gas one payment costs, measured on chain (docs: architecture-adminui-jobs.md F11).
+  const gasRaw = one("gas-per-payment-near") ?? null;
+  if (gasRaw !== null && (!/^\d{1,6}(\.\d{1,24})?$/.test(gasRaw) || !/[1-9]/.test(gasRaw))) throw new ConfigError("--gas-per-payment-near must be a NEAR amount above 0 with at most 24 decimals (e.g. 0.000333)");
+  const relayerWatched = (flags.get("watch") ?? []).some((s) => s.split("=")[1] === "relayer");
+  if (relayerWatched && gasRaw === null) throw new ConfigError("--watch ...=relayer=... needs --gas-per-payment-near (NEAR one x402 payment costs the relayer, e.g. 0.000333)");
 
   return {
     network,
@@ -289,6 +300,8 @@ export function loadConfig(argv: readonly string[], env: Record<string, string |
     explorer,
     callPriceUnits: callPrice === null ? null : BigInt(callPrice).toString(),
     lowCalls: int("low-calls", 3, 0, 1_000_000),
+    gasPerPaymentNear: gasRaw,
+    relayerMinPayments: int("relayer-min-payments", 500, 1, 100_000_000),
     reconcileSec: int("reconcile-sec", 5, 1, 3600),
     reconcileBatch: int("reconcile-batch", 200, 1, 100_000),
     metricsWindowSec: int("metrics-window-sec", 3600, 60, 30 * 86400),
