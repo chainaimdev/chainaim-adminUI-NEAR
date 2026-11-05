@@ -1,40 +1,86 @@
-# chainaim-adminUI-NEAR: a live operator console for NEAR USDC x402 payments
+# chainaim-adminUI-NEAR: live operator console for NEAR USDC x402 payments
 
-This console shows NEAR testnet USDC payments to an x402 paywall as they happen. They come from two independent sources:
-- **what the paywall says it settled**: its `payment_settled` claims
-- **what the chain shows**: NEP-141 transfers in final blocks, read over up to three independent roads
+This console shows, as they happen, the NEAR TestNet USDC payments and paid jobs of
+[ChainAim Private AI](https://github.com/chainaimdev/chainaim-private-ai), from two independent sources:
+- **what the paywall says it settled**: its `payment_settled` claims, and the console's paid-job events
+  (`job_quoted`, `job_released`, `job_expired`)
+- **what the chain shows**: NEP-141 USDC transfers in final blocks, read over up to three independent roads
 
-The two are reconciled payment by payment.
+The two are reconciled payment by payment (`matched`, `pending`, `only_in_log`, `only_on_ledger`, `mismatch`).
+
+## How to run it
+
+Full commands with expected output: **[cmd.md](cmd.md)**. This repo runs together with
+[chainaim-private-ai](https://github.com/chainaimdev/chainaim-private-ai).
+
+**1. One-time setup (once per PC):** [cmd.md PART 1](cmd.md) — tools, clone, build the admin UI
+(`npm --prefix apps\admin-console install` and `run build`), the secrets file `C:\PRIV-AI-SECRETS\near-watch.env`, and
+the accounts to watch. Then private-ai's one-time setup.
+
+**2. Run all containers and both UIs (every day):** two commands, this repo first.
+
+```powershell
+cd C:\SATHYA\CHAINAIM3003\mcp-servers\chainaim-adminUI-NEAR
+.\up.ps1                       # ca-near-watch + admin UI http://127.0.0.1:8800
+cd C:\SATHYA\CHAINAIM3003\mcp-servers\chainiam-private-ai
+.\test-console\up.ps1          # six backend containers + console UI http://127.0.0.1:8730
+```
+
+Stop: `.\test-console\down.ps1` in private-ai, then `.\down.ps1` here.
+
+## What runs where
+
+| Part | Runs as | Port | Role |
+|---|---|---|---|
+| near-watch | Docker, container `ca-near-watch` (network `chainaim-test`, volume `near-watch-data`) | 127.0.0.1:8790 | Reads the chain, stores in SQLite, takes claims and job events on `/ingest/*`, reconciles, serves `/api/*` and SSE to the console (admin key) |
+| admin UI | Node on your PC (Next.js, `apps/admin-console`) | **127.0.0.1:8800** | The pages; a server-side proxy holds the admin key, the browser never sees it |
 
 ```
-paywall ──POST /ingest/claim──▶ services/near-watch ◀── neardata (long-poll) · QuickNode RPC · public RPC · backfill
-                                  SQLite: txs · roads · cursors · claims · recon
-                                  /api/*  SSE /stream (admin key)
-                                        ▼
-                         apps/admin-console (Next.js; key held server-side)
-                         Live ops · Ledger · Reconcile · Feeds · Seller wallet
+private-ai paywall ──POST /ingest/claim──▶ near-watch (Docker) ◀── neardata · QuickNode RPC · public RPC · backfill
+private-ai console ──POST /ingest/job────▶   SQLite: txs · roads · cursors · claims · recon · jobs
+                                               /api/*  SSE /stream (admin key)
+                                                     ▼
+                                         admin UI 8800 (PC): Live ops · Ledger · Reconcile · Jobs · Feeds · Seller wallet
 ```
+
+Inside Docker, the private-ai containers reach near-watch as `http://near-watch:8790` (the shared network
+`chainaim-test`). The admin UI reaches it as `http://127.0.0.1:8790`.
+
+## Roads
+
+| Road | Needs | Notes |
+|---|---|---|
+| `neardata` | optional `NEARDATA_API_KEY` | Without a key the public limit is 180 requests/minute; it answers HTTP 429 when exceeded |
+| `qn-rpc` | `QUICKNODE_NEAR_HTTP_TESTNET` | Skipped and reported when not set; down when the plan's daily quota is used |
+| `rpc` | `NEAR_RPC_FALLBACK_URL_TESTNET` (default in `.env.example`) | Public FastNEAR RPC |
+
+The first road to deliver a transfer wins; the others are recorded with their lag. One live road is enough.
 
 ## Do X → see Y
 
 | Do | See |
 |---|---|
-| `npm --prefix services\near-watch test` | 34 tests pass. The doubles serve a **recorded real testnet x402 NEAR payment** (`H3ZFsVY1…`, 0.01 USDC, a relayed NEP-366 delegate `ft_transfer` with no memo). The tests cover: two roads, where the first wins and the second is recorded with its lag; a claim reconciling to `matched` by tx hash alone; a claim that went `only_in_log` before its transfer was read turning `matched`, marked late (real tx `BFEX1KAH…`); the RPC road's read-ahead against serial; the neardata road down while RPC still records; a restart that backfills with no duplicates; and no key in any API response |
-| `npm --prefix apps\admin-console test` | 39 tests pass (proxy rules, SSE pass-through, store and derive over a real near-watch server) |
-| Follow SETUP-COMMANDS.md, then open http://127.0.0.1:8800 | Header chips show each road's state and final block height. Blocks stream in about every second |
-| Make one paid call with the paywall on `PAY_RAILS=near` | It shows on **Live ops** as a `claim` and as a chain `tx`. **Ledger** shows which road won and how far behind the others were. **Reconcile** shows `matched` within `--settle-grace-blocks` |
-| Remove `neardata` from `--feeds`, or block it | **Feeds** shows it `down`. The transfer is still recorded via `qn-rpc` / `rpc` |
-| Restart near-watch | It logs `backfill <cursor>..<tip>`. No transfer appears twice (the roads table keeps one row per road) |
-| Post a claim whose tx never lands, or make an x402 payment to the pay-to with no claim | After the grace: `only_in_log` or `only_on_ledger`, with an alert |
-| `curl /api/feeds` with the admin key | Provider hosts only. QuickNode tokens and `?apiKey=` never appear |
+| `npm --prefix services\near-watch test` | 50 tests pass, over a recorded real TestNet x402 NEAR payment (`H3ZFsVY1…`, 0.01 USDC, a relayed NEP-366 delegate `ft_transfer` with no memo): roads, reconcile, late claims and late transfers, restart without duplicates, paid jobs, relayer gas alert, no key in any API response |
+| `npm --prefix apps\admin-console test` | 43 tests pass (proxy rules, SSE pass-through, store and derive over a real near-watch, jobs) |
+| `.\up.ps1`, then open http://127.0.0.1:8800 | Header chips show each road and the final block height; blocks stream in about every second |
+| One paid call or paid job in private-ai | **Live ops** shows a `claim` and a chain `tx`; **Jobs** shows `quoted` → `released`; **Reconcile** shows `matched` within `--settle-grace-blocks` (30) |
+| `docker compose restart near-watch` | It backfills from its saved cursor; no transfer appears twice |
+| `curl /api/feeds` with the admin key | Provider hosts only; QuickNode tokens and `?apiKey=` never appear |
 
 ## Layout
 
-- `services/near-watch`: the watcher. See its README, and `node src/main.ts --help` for every flag.
-- `apps/admin-console`: the console. See its README.
-- `packages/chain-core`: shared code: money in bigint base units, CAIP-2 ids, redaction, NEAR ids, and the signer interface.
-- `docs/NEAR-GATES.md`: every NEAR fact this repo relies on, with its source. The NEAR CAIP-2 ids default to `near:testnet` / `near:mainnet`, the only two `@x402/near` accepts (A5). **x402 NEAR payments carry no memo** (A7), so claims match transfers by tx hash only.
-- `services/custody`: step 4, OutLayer TEE wallets. Deferred.
-- `HACKATHON-DISCLOSURE.md`: what was ported from liveops and what was built in the window.
+- `services/near-watch`: the watcher. `node src/main.ts --help` lists every flag. Its Docker image is
+  `services/near-watch/Dockerfile` (build context: the repository root).
+- `apps/admin-console`: the console (Next.js).
+- `packages/chain-core`: shared code: money in bigint base units, CAIP-2 ids, redaction, NEAR ids, the signer interface.
+- `docker-compose.yml`, `up.ps1`, `down.ps1`: near-watch in Docker plus the admin UI on the PC.
+- `docs/NEAR-GATES.md`: every NEAR fact this repo relies on, with its source. CAIP-2 ids default to `near:testnet` /
+  `near:mainnet` (A5). **x402 NEAR payments carry no memo** (A7), so claims match transfers by tx hash only.
+- `architecture-adminui-jobs.md`: the paid-jobs requirements (ARCH-201..210).
+- `DOCKERIZE-PLAN.md`: why and how near-watch moved into Docker.
+- `services/custody`: OutLayer TEE wallets, deferred.
+- `HACKATHON-DISCLOSURE.md`: what was ported and what was built in the hackathon window.
+
+Never paste `docker inspect` or `docker compose config` output anywhere: they can print secret values.
 
 MIT licensed.

@@ -1,0 +1,20 @@
+# Build context = repo root (services/near-watch/Dockerfile). Only near-watch and chain-core sources are copied;
+# everything else stays out of the context, secrets and runtime data above all.
+**/node_modules
+**/.next
+data
+.git
+.claude
+.env
+.env.*
+**/*.env
+**/*.sqlite*
+**/*.pem
+**/*.key
+**/*.log
+**/test
+**/scripts
+**/*.tsbuildinfo
+apps
+docs
+services/custody

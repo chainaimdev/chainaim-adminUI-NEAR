@@ -1,0 +1,58 @@
+# near-watch in Docker; the 8800 admin UI stays on the PC (DOCKERIZE-PLAN.md). Use .\up.ps1 / .\down.ps1.
+# Network chainaim-test is shared with chainiam-private-ai, so its paywall and console-api reach this service as
+# http://near-watch:8790 (/ingest/claim, /ingest/job). Published on 127.0.0.1 only.
+# The secrets file is mounted read-only and read by Node's --env-file, as today: no secret value is in this file,
+# in `docker compose config` or in the container's env. Still, never paste `docker compose config` / `docker inspect`.
+#   NEAR_WATCH_ENV_FILE   path of near-watch.env on the PC (default C:/PRIV-AI-SECRETS/near-watch.env)
+#   NEAR_WATCH_PORT       port published on 127.0.0.1 (default 8790)
+name: chainaim-adminui-near
+
+services:
+  near-watch:
+    build:
+      context: .
+      dockerfile: services/near-watch/Dockerfile
+    image: chainaim-near-watch:local
+    container_name: ca-near-watch
+    init: true
+    restart: unless-stopped
+    # Today's start command (MANUAL_SETUP M-W) plus --bind 0.0.0.0 (inside the container only; the host side is
+    # 127.0.0.1) and --store on the volume. Edit the --watch entries here if yours differ.
+    command:
+      - --bind
+      - 0.0.0.0
+      - --port
+      - "8790"
+      - --store
+      - /data/watch.sqlite
+      - --watch
+      - buyer1=buyer=chainaim-buyer-seller.testnet
+      - --watch
+      - relayer=relayer=chainaim-relayer-seller.testnet
+      - --gas-per-payment-near
+      - "0.000333"
+    volumes:
+      - type: bind
+        source: ${NEAR_WATCH_ENV_FILE:-C:/PRIV-AI-SECRETS/near-watch.env}
+        target: /run/secrets/near-watch.env
+        read_only: true
+      - near-watch-data:/data
+    ports:
+      - "127.0.0.1:${NEAR_WATCH_PORT:-8790}:8790"
+    networks:
+      - chainaim-test
+    healthcheck:
+      # Healthy when every network's roads are live (/healthz answers 200); 503 while catching up.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8790/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 60s
+
+volumes:
+  near-watch-data:
+    name: near-watch-data
+
+networks:
+  chainaim-test:
+    external: true

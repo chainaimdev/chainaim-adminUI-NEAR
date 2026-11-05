@@ -39,3 +39,20 @@ On the paywall side, point its payment log at near-watch. Use either `PAYMENT_LO
 .\test-console\stack.ps1
 start http://127.0.0.1:8800
 ```
+
+## 4. Or: near-watch in Docker, the admin UI on the PC (DOCKERIZE-PLAN.md)
+
+You need Docker Desktop. It uses the same secrets file, mounted read-only into the container and read by Node's `--env-file` as it is today.
+
+```powershell
+# Stop the PC near-watch first: it holds port 8790 and the SQLite file.
+.\up.ps1 -Secrets C:\PRIV-AI-SECRETS -ImportStore   # first time: copies data\near-watch\watch.sqlite into volume near-watch-data
+.\up.ps1 -Secrets C:\PRIV-AI-SECRETS                # later
+.\test-console\stack.ps1
+.\down.ps1                                         # stops the admin UI and the container; the volume is kept
+```
+
+- The `--watch` entries and `--gas-per-payment-near` are set in the `command` of `docker-compose.yml`. Edit them there if yours differ.
+- On the `chainaim-test` network, private-ai's paywall and console-api reach near-watch at `http://near-watch:8790/ingest/claim` and `/ingest/job`. The old `http://host.docker.internal:8790/ingest/claim` still works.
+- Rollback: run `.\down.ps1`, then section 3 as before. It uses the untouched `data\near-watch\watch.sqlite`.
+- Never paste `docker compose config` or `docker inspect` output.
