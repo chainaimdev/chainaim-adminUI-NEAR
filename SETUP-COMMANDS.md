@@ -46,8 +46,8 @@ You need Docker Desktop. It uses the same secrets file, mounted read-only into t
 
 ```powershell
 # Stop the PC near-watch first: it holds port 8790 and the SQLite file.
-.\up.ps1 -Secrets C:\PRIV-AI-SECRETS -ImportStore   # first time: copies data\near-watch\watch.sqlite into volume near-watch-data
-.\up.ps1 -Secrets C:\PRIV-AI-SECRETS                # later
+.\nearadminup.ps1 -Secrets C:\PRIV-AI-SECRETS -ImportStore   # first time: copies data\near-watch\watch.sqlite into volume near-watch-data
+.\nearadminup.ps1 -Secrets C:\PRIV-AI-SECRETS                # later
 .\test-console\stack.ps1
 .\down.ps1                                         # stops the admin UI and the container; the volume is kept
 ```

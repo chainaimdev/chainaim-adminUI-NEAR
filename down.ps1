@@ -1,4 +1,4 @@
-# Stop what .\up.ps1 started: the admin UI on the PC and the near-watch container. The volume near-watch-data is kept.
+# Stop what .\nearadminup.ps1 started: the admin UI on the PC and the near-watch container. The volume near-watch-data is kept.
 #   .\down.ps1 [-ConsolePort 8800] [-KeepConsole]
 param([int]$ConsolePort = 8800, [switch]$KeepConsole)
 $ErrorActionPreference = "Stop"

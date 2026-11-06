@@ -68,16 +68,20 @@ private-ai reads `NEAR_WATCH_INGEST_KEY` from this same file.
 
 ### A4. Accounts to watch
 
-The watched buyer and relayer accounts and the relayer's gas per payment are in the `command` of
-`docker-compose.yml`:
+The watched buyer and relayer accounts and the relayer's gas per payment are in `config\near-watch-watch.conf`
+(committed, not secret; chainiam-private-ai architecture-tab03-agent-mode.md ARCH-313). `nearadminup.ps1` reads it and starts
+near-watch with it; its default is exactly the command `docker-compose.yml` has always run:
 
 ```
---watch buyer1=buyer=chainaim-buyer-seller.testnet
---watch relayer=relayer=chainaim-relayer-seller.testnet
---gas-per-payment-near 0.000333
+WATCH=buyer1=buyer=chainaim-buyer-seller.testnet
+WATCH=relayer=relayer=chainaim-relayer-seller.testnet
+GAS_PER_PAYMENT_NEAR=0.000333
 ```
 
-Edit them there if yours differ (the pay-to comes from `NEAR_PAY_TO_TESTNET`).
+Edit that file if yours differ (the pay-to comes from `NEAR_PAY_TO_TESTNET`). For private-ai's tab 03 agent mode add one
+buyer line per tenant, e.g. `WATCH=t02=buyer=chainaim-t02-seller.testnet` and `WATCH=t03=buyer=chainaim-t03-seller.testnet`
+(t01 is `buyer1`), plus your manual wallet account. For one start only: `.\nearadminup.ps1 -Watch a=buyer=x.testnet,relayer=relayer=y.testnet
+-GasPerPaymentNear 0.000333`. Check first, starting nothing: `.\nearadminup.ps1 -DryRun` prints near-watch's command.
 
 ---
 
@@ -88,7 +92,7 @@ Edit them there if yours differ (the pay-to comes from `NEAR_PAY_TO_TESTNET`).
 ```powershell
 # 1. This repo: near-watch container + admin UI (8800)
 cd C:\SATHYA\CHAINAIM3003\mcp-servers\chainaim-adminUI-NEAR
-.\up.ps1
+.\nearadminup.ps1
 
 # 2. private-ai repo: the six backend containers + the console UI (8730)
 cd C:\SATHYA\CHAINAIM3003\mcp-servers\chainiam-private-ai
@@ -97,18 +101,18 @@ cd C:\SATHYA\CHAINAIM3003\mcp-servers\chainiam-private-ai
 
 | Command | Containers it starts | UI it starts |
 |---|---|---|
-| 1. this repo `.\up.ps1` | `ca-near-watch` | admin UI http://127.0.0.1:8800 (own window) |
+| 1. this repo `.\nearadminup.ps1` | `ca-near-watch` | admin UI http://127.0.0.1:8800 (own window) |
 | 2. private-ai `.\test-console\up.ps1` | `ca-presidio`, `ca-gateway`, `ca-paywall`, `ca-analyst`, `ca-chain-query`, `ca-console-api` | console UI http://127.0.0.1:8730 (own window, opens the browser) |
 
-`.\up.ps1` builds the image when needed, starts `ca-near-watch`, waits for `/healthz`, then starts the admin UI in its
+`.\nearadminup.ps1` builds the image when needed, starts `ca-near-watch`, waits for `/healthz`, then starts the admin UI in its
 own window. Open **http://127.0.0.1:8800** (`127.0.0.1`, not `localhost`). The private-ai side is described in its
 `cmd.md`, PART 2.
 
 | Situation | Command |
 |---|---|
-| Moving from the old PC near-watch: copy its store once | `.\up.ps1 -ImportStore` (only into an empty volume) |
-| near-watch only, no admin UI window | `.\up.ps1 -NoConsole` |
-| Secrets in another folder | `.\up.ps1 -Secrets <folder>` |
+| Moving from the old PC near-watch: copy its store once | `.\nearadminup.ps1 -ImportStore` (only into an empty volume) |
+| near-watch only, no admin UI window | `.\nearadminup.ps1 -NoConsole` |
+| Secrets in another folder | `.\nearadminup.ps1 -Secrets <folder>` |
 
 ---
 
@@ -160,11 +164,13 @@ Expected: 50 and 43 pass.
 
 | What you see | Fix |
 |---|---|
-| `neardata down`, errors growing | HTTP 429: set `NEARDATA_API_KEY`, then `.\down.ps1` and `.\up.ps1` |
+| `neardata down`, errors growing | HTTP 429: set `NEARDATA_API_KEY`, then `.\down.ps1` and `.\nearadminup.ps1` |
 | `qn-rpc down` / `backfill down` | QuickNode daily quota used, or no URL set. The `rpc` road still carries every block |
-| `port 8790 is held by node` | The old PC near-watch is running: close its window, run `.\up.ps1` again |
-| Admin UI page does not open | Use http://127.0.0.1:8800; if nothing listens on 8800, run `.\up.ps1` again (near-watch keeps running) |
+| `port 8790 is held by node` | The old PC near-watch is running: close its window, run `.\nearadminup.ps1` again |
+| Admin UI page does not open | Use http://127.0.0.1:8800; if nothing listens on 8800, run `.\nearadminup.ps1` again (near-watch keeps running) |
 | A container log | `docker logs ca-near-watch --tail 40` |
+| `ca-near-watch` shows `(unhealthy)` | Its health check passes only when every road is live; with `qn-rpc` / `neardata` down it stays unhealthy. It still works while one road (`rpc`) is live: check with `.\test-console\stack.ps1` |
+| A tenant or wallet has no buyer card | Add its `WATCH=<label>=buyer=<account>` line to `config\near-watch-watch.conf` (A4), then `.\down.ps1` and `.\nearadminup.ps1` |
 
 ## G. Back to the old way (near-watch as a Node process)
 

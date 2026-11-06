@@ -73,7 +73,7 @@ then — not assumed now.
 | `services/near-watch/Dockerfile` | `node:24-slim`; context = repo root; copies `services/near-watch/{package.json,src}` and `packages/chain-core/src`; no `npm ci` needed for runtime (devDependencies only); runs as `node` user; `CMD node src/main.ts` with flags from compose |
 | `.dockerignore` (repo root) | exclude `node_modules`, `.next`, `data`, `.git`, `.env*`, tests |
 | `docker-compose.yml` (repo root) | service `near-watch`; network `chainaim-test` (external); `env_file: C:\PRIV-AI-SECRETS\near-watch.env` (or `$HOME\chainaim-secrets\near-watch.env`, whichever you use today); port `127.0.0.1:8790:8790`; volume `near-watch-data:/data`; healthcheck on `/healthz` |
-| `up.ps1` / `down.ps1` | compose up, wait for `/healthz`, start the admin UI window as `start-live.ps1` does today (console part only); down stops both |
+| `nearadminup.ps1` (first named `up.ps1`) / `down.ps1` | compose up, wait for `/healthz`, start the admin UI window as `start-live.ps1` does today (console part only); down stops both |
 
 near-watch command in compose:
 `--bind 0.0.0.0 --port 8790 --store /data/watch.sqlite` + the same `--watch label=role=account` entries and

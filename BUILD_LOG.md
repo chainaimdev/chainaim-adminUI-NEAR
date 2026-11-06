@@ -29,3 +29,8 @@
 - External conditions seen, not caused by Docker: QuickNode answers "daily request limit reached", so qn-rpc and the backfill road are down. neardata answers HTTP 429 (no NEARDATA_API_KEY). The public rpc road carries the blocks.
 - After: near-watch 50/50 and admin-console 43/43, with the container on 8790.
 - Not done (private-ai's plan P5, owner run): point the paywall at `http://near-watch:8790/ingest/claim` and the console at `--job-feed-url http://near-watch:8790/ingest/job`. Then make one paid NEAR call and one paid job (N3).
+
+## 2026-11-06 — near-watch watch list from a setting (chainiam-private-ai architecture-tab03-agent-mode.md ARCH-313)
+- New config/near-watch-watch.conf (WATCH=label=role=account lines, GAS_PER_PAYMENT_NEAR; committed, not secret) with today's exact values. up.ps1: -WatchFile (default that file), -Watch / -GasPerPaymentNear (one start), -DryRun (writes runtime/compose/near-watch.yml, checks it with compose, prints near-watch's command only, starts nothing). Without the file and without -Watch, docker-compose.yml's own command runs. .gitignore: runtime/. cmd.md A4 updated. near-watch source unchanged.
+- Compose alone → `--bind 0.0.0.0 --port 8790 --store /data/watch.sqlite --watch buyer1=buyer=chainaim-buyer-seller.testnet --watch relayer=relayer=chainaim-relayer-seller.testnet --gas-per-payment-near 0.000333`; `.\up.ps1 -DryRun` → the same command; `-Watch buyer1=...,t02=buyer=chainaim-t02-seller.testnet,t03=buyer=chainaim-t03-seller.testnet,relayer=...` → four --watch entries; `-Watch "bad entry"` → refused.
+- Tests: services/near-watch 50/50, apps/admin-console 43/43. ca-near-watch was not restarted. Owner: add the tenant lines (M4 in chainiam-private-ai MANUAL_SETUP.md), then .\down.ps1; .\up.ps1.
