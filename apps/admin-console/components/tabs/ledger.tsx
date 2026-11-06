@@ -130,12 +130,34 @@ export function LedgerTab({ live }: { live: LiveState }) {
           </tbody>
         </table>
       </div>
-      <div className="inset">
+      <div className="inset read-me">
         <strong>How to read this</strong>
-        Every row is a NEP-141 transfer of the watched token touching a watched account, recorded from a final block (a failed <code>ft_transfer</code> is kept as
-        <i> failure</i> and never counted). &quot;first arrival&quot; is how long after the block&apos;s time the winning road delivered it (live rows only); later roads show their
-        delay behind the winner (from <code>road</code> events, this session). Roads: neardata = FastNear long-poll, qn-rpc = QuickNode JSON-RPC, rpc = public RPC fallback,
-        backfill = catch-up from the stored cursor. Links open the explorer near-watch is configured with; the row itself is the proof.
+        <ul>
+          <li>
+            <b>Each row</b> is one NEP-141 transfer of the watched token, to or from a watched account, taken from a final block. The row
+            itself is the proof; its link opens the transaction in the explorer near-watch is configured with.
+          </li>
+          <li>
+            <b>Failed transfers:</b> a failed <code>ft_transfer</code> is shown as <i>failure</i> and never counted.
+          </li>
+          <li>
+            <b>First arrival:</b> how long after the block&apos;s time the first road delivered the row (live rows only).
+          </li>
+          <li>
+            <b>Other roads:</b> how far each one was behind that first road (from <code>road</code> events, this session only).
+          </li>
+        </ul>
+        <table>
+          <thead>
+            <tr><th>Road</th><th>Source</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>neardata</td><td>FastNear long-poll</td></tr>
+            <tr><td>qn-rpc</td><td>QuickNode JSON-RPC</td></tr>
+            <tr><td>rpc</td><td>Public RPC (fallback)</td></tr>
+            <tr><td>backfill</td><td>Catch-up from the stored cursor</td></tr>
+          </tbody>
+        </table>
       </div>
     </section>
   );

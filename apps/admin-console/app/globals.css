@@ -91,6 +91,13 @@ td.r, th.r { text-align: right; }
 .attn span { color: var(--muted); }
 .inset { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: 11px "IBM Plex Mono", monospace; color: var(--text2); line-height: 1.6; background: var(--panel2); }
 .inset strong { display: block; font: 600 12px "Instrument Sans", sans-serif; color: var(--text); margin-bottom: 3px; }
+/* "How to read this" (ledger tab): one idea per line and the roads as a small table */
+.read-me ul { margin: 2px 0 8px; padding-left: 16px; }
+.read-me li { margin: 2px 0; }
+.read-me b { color: var(--text); font-weight: 600; }
+.read-me table { border-collapse: collapse; margin-top: 2px; }
+.read-me th, .read-me td { text-align: left; padding: 2px 14px 2px 0; border-bottom: 1px solid var(--line); }
+.read-me th { color: var(--text); font-weight: 600; }
 .empty { padding: 18px 4px; font: 11px "IBM Plex Mono", monospace; color: var(--muted); }
 .empty.bad { color: var(--bad); }
 

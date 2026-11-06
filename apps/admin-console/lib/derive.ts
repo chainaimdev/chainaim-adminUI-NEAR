@@ -16,6 +16,7 @@ import {
   ROADS,
   type BalanceEntry,
   type FeedsNetwork,
+  type GraceReport,
   type Metrics,
   type Road,
   type SellerBuyer,
@@ -24,6 +25,30 @@ import {
   type TraceEvent,
   type WatchEntry,
 } from "./types.ts";
+
+/**
+ * How a reconcile row's detail starts after an operator re-judge (near-watch src/reconcile.ts REJUDGED; a test keeps the
+ * two equal). Such a row is matched; its detail is the audit text (what it was and the operator's reason).
+ */
+export const REJUDGED_PREFIX = "re-judged ";
+
+/**
+ * The Reconcile tab's detail cell. A re-judged row shows a short marker and keeps the full audit text for hover
+ * (owner, 2026-11-06: the whole sentence in the table is too much; the row and its record stay). Any other detail is
+ * shown as it is: a real gap must be read at a glance.
+ */
+export function reconDetail(detail: string | null | undefined): { text: string; title: string | undefined; rejudged: boolean } {
+  if (!detail) return { text: "", title: undefined, rejudged: false };
+  if (detail.startsWith(REJUDGED_PREFIX)) return { text: "re-judged by operator", title: detail, rejudged: true };
+  return { text: detail, title: undefined, rejudged: false };
+}
+
+/** The Reconcile tab's "Wait before flagging a gap" line for one network: the grace in blocks and seconds, and how far behind the chain near-watch reads. */
+export function graceLine(network: string, g: GraceReport): string {
+  const secs = g.graceMs === null ? "" : ` (about ${Math.round(g.graceMs / 1000)} s)`;
+  const behind = g.trailBlocks === null ? "" : ` Reading ${g.trailBlocks} block(s) behind the chain.`;
+  return `${network}: ${g.graceBlocks} blocks${secs}.${behind}`;
+}
 
 /** How long after its last step a call still counts as in progress, and a buyer as active. */
 export const IN_FLIGHT_MS = 120_000;

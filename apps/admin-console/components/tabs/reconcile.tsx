@@ -11,7 +11,7 @@
  */
 import { useState } from "react";
 import { usePoll } from "../../hooks/use-poll.ts";
-import { mergeTxs } from "../../lib/derive.ts";
+import { graceLine, mergeTxs, reconDetail } from "../../lib/derive.ts";
 import { clock, decimals, short, unitsToDecimal } from "../../lib/format.ts";
 import { labelOf, txKey, type LiveState } from "../../lib/live-store.ts";
 import { GAP_STATES, RECON_STATES, type ClaimRow, type GraceReport, type ReconRow, type ReconState, type SnapshotTx } from "../../lib/types.ts";
@@ -122,6 +122,7 @@ export function ReconcileTab({ live, decimalsOf, grace }: { live: LiveState; dec
                 const gap = (GAP_STATES as readonly string[]).includes(r.state);
                 const cl = c ? claimed(c, decimalsOf(r.network)) : null;
                 const invoice = r.invoiceId ?? c?.invoiceId ?? null;
+                const note = reconDetail(r.detail);
                 return (
                   <tr key={key} className={r.state === "only_on_ledger" ? "unacc" : gap ? "gap" : ""}>
                     <td>{clock(r.updatedMs)}</td>
@@ -143,7 +144,10 @@ export function ReconcileTab({ live, decimalsOf, grace }: { live: LiveState; dec
                       {r.state.replaceAll("_", " ")}
                       {isLate(r) && <span className="muted"> · late</span>}
                     </td>
-                    <td className="muted">{r.detail ?? ""}</td>
+                    <td className="muted" title={note.title}>
+                      {note.text}
+                      {note.rejudged && <span aria-hidden="true"> ⓘ</span>}
+                    </td>
                   </tr>
                 );
               })
@@ -151,30 +155,23 @@ export function ReconcileTab({ live, decimalsOf, grace }: { live: LiveState; dec
           </tbody>
         </table>
       </div>
-      <div className="inset">
-        <strong>Matching rule (near-watch src/reconcile.ts, DESIGN §5.3)</strong>
-        Reported = the paywall&apos;s <code>payment_settled</code> line (amount in base units). Measured = a successful <code>ft_transfer</code> of the watched token contract into
-        a watched pay-to in a final block, with exactly one transfer event. No memo is required: the x402 NEAR exact scheme&apos;s transfer is{" "}
-        <code>ft_transfer {"{receiver_id, amount}"}</code> with no memo (chainiam-private-ai docs/NEAR-GATES.md G3). Claims join chain transfers by transaction hash only (base58,
-        exact); the claim&apos;s invoiceId is shown when it has one and is not compared with anything on chain. Amount, payer and token are compared, amounts in base units. A side still alone after the grace (near-watch <code>--settle-grace-blocks</code>, counted in final
-        blocks) becomes <i>only in log</i> or <i>only on ledger</i>; both seen but disagreeing is <i>mismatch</i>. When the missing side lands later, the same row turns
-        <i> matched</i> and is marked <i>late</i>, with how late in the detail. Transfers from before reconciling first started are not judged.
+      <div className="inset" title="near-watch src/reconcile.ts: rows join by transaction hash; amount, payer and token are compared in base units; transfers from before reconciling started are not judged.">
+        <strong>How to read this</strong>
+        Each row is one payment, seen twice: what the paywall says it was paid (<i>reported</i>) and the USDC transfer on the chain (<i>measured</i>).{" "}
+        <i>matched</i>: both agree. <i>pending</i>: waiting for the other side. <i>only in log</i>: the paywall says paid, no transfer found.{" "}
+        <i>only on ledger</i>: a transfer with no paywall record. <i>mismatch</i>: both found, but they disagree. <i>late</i>: matched after a delay.{" "}
+        <i>re-judged by operator</i>: a false mismatch an operator cleared; hover for why.
       </div>
-      <div className="inset">
-        <strong>Grace (near-watch --settle-grace-blocks)</strong>
+      <div className="inset" title={Object.values(grace).map((g) => g?.tradeoff ?? "").join(" ")}>
+        <strong>Wait before flagging a gap</strong>
         {Object.keys(grace).length === 0
-          ? " Loading /api/feeds…"
-          : Object.entries(grace).map(([n, g]) =>
-              g ? (
-                <span key={n}>
-                  {" "}
-                  {n}: {g.tradeoff}
-                  {g.trailBlocks !== null ? ` Now the newest block read is ~${g.trailBlocks} block(s) old.` : ""}
-                </span>
-              ) : (
-                <span key={n}> {n}: near-watch did not report its grace.</span>
-              ),
-            )}
+          ? " loading…"
+          : Object.entries(grace).map(([n, g]) => (
+              <span key={n}>
+                {" "}
+                {g ? graceLine(n, g) : `${n}: not reported by near-watch.`}
+              </span>
+            ))}
       </div>
     </section>
   );

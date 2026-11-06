@@ -33,9 +33,9 @@ function Session({ live, conn }: { live: LiveState; conn: Conn }) {
   const applied = Object.entries(live.stats.applied);
   const ignored = Object.entries(live.stats.ignored);
   return (
-    <div className="inset">
-      <strong>This console session</strong>
-      near-watch {live.version ?? "—"}, started {clock(live.startedAt)} · events received: {applied.length === 0 ? "none" : applied.map(([k, v]) => `${k} ${v}`).join(", ")}
+    <div className="inset" title={`events received: ${applied.length === 0 ? "none" : applied.map(([k, v]) => `${k} ${v}`).join(", ")}`}>
+      <strong>Session</strong>
+      near-watch {live.version ?? "—"}, started {clock(live.startedAt)}
       {ignored.length > 0 && <> · unknown events ignored: {ignored.map(([k, v]) => `${k} ${v}`).join(", ")}</>}
       {live.stats.errors > 0 && (
         <>
@@ -132,10 +132,12 @@ export function LiveConsole() {
           </div>
         )}
         <Session live={live} conn={conn} />
-        <div className="inset">
-          <strong>Privacy boundary</strong>
-          This console sees money, routes and chain ids only — never prompts, answers, decision ids or restore maps. near-watch&apos;s address, RPC / QuickNode endpoints and admin
-          keys stay on the console&apos;s server; this page talks to /api/watch only and is told road names and redacted hosts, never URLs with tokens.
+        <div
+          className="inset"
+          title="Never prompts, answers, decision ids or restore maps. near-watch's address, RPC / QuickNode endpoints and the admin key stay on this console's server; the page talks to /api/watch only and sees road names and redacted hosts, never URLs with tokens."
+        >
+          <strong>Privacy</strong>
+          This page shows payments and chain ids only, never prompts or answers. Keys stay on the server.
         </div>
       </main>
     </>

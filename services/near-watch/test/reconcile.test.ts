@@ -201,7 +201,7 @@ test("rejudge: the false mismatch becomes matched, keeps what it was and why, al
   assert.equal(row?.state, "matched");
   assert.equal(row?.invoiceId, INV);
   assert.ok(row?.detail?.startsWith(REJUDGED));
-  assert.match(row?.detail ?? "", /^re-judged \d{4}-\d\d-\d\dT[\d:.]+Z by operator: was mismatch \(/);
+  assert.match(row?.detail ?? "", /^re-judged by operator: was mismatch \(/, "no time in the text: the row's updated time is the re-judge time");
   assert.ok(row?.detail?.includes(`(${was}); reason: ${REASON}`), "the old detail and the trimmed reason are kept");
   assert.deepEqual(events.map((e) => [e.state, e.previous]), [["matched", "mismatch"]], "one reconcile event (the Jobs tab follows it)");
   assert.equal(alerts.filter((a) => a.code === "reconcile_rejudged").length, 1);

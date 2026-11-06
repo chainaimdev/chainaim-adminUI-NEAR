@@ -26,7 +26,8 @@
  * operator who checked the transfer names the receiver and a reason; the row turns matched only if the stored transfer
  * went to exactly that account, that account is a watched pay-to now, the transfer is otherwise an x402 payment
  * (success, ft_transfer, one event) and amount, payer and token agree with the claim. Never automatic: a later config
- * change must not bless old payments. The detail keeps what it was and why ("re-judged <time> by operator: ...").
+ * change must not bless old payments. The detail keeps what it was and why ("re-judged by operator: was mismatch (...);
+ * reason: ..."); the admin console shows it as a short "re-judged by operator" marker with that text on hover.
  */
 import { compareUnits } from "../../../packages/chain-core/src/money.ts";
 import { isAccountId, isNearHash } from "../../../packages/chain-core/src/near.ts";
@@ -166,7 +167,8 @@ export class Reconciler {
     if (row.to !== receiver) return { ok: false, status: 409, error: `the stored transfer went to ${row.to}, not ${receiver}` };
     const still = [...Reconciler.x402Shape(row), ...Reconciler.fieldDiffs(claim, row)];
     if (still.length) return { ok: false, status: 409, error: `still disagrees: ${still.join("; ")}` };
-    const detail = `${REJUDGED}${new Date(this.now()).toISOString()} by operator: was mismatch (${prev.detail ?? "no detail"}); reason: ${reason}`;
+    // No time in the text: the row's updated time is the re-judge time (the Reconcile tab shows it).
+    const detail = `${REJUDGED}by operator: was mismatch (${prev.detail ?? "no detail"}); reason: ${reason}`;
     this.apply(network, hash, { state: "matched", side: prev.side, detail, invoiceId: prev.invoiceId });
     this.bus.alert("info", "reconcile_rejudged", `${hash}${prev.invoiceId ? ` (invoice ${prev.invoiceId})` : ""}: matched by operator: ${reason}`, network);
     return { ok: true, state: "matched", detail };

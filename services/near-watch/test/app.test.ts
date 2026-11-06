@@ -161,7 +161,7 @@ test("false mismatch (live 2026-11-06): read with a wrong pay-to, still a mismat
     assert.ok(m, run.out);
     const body = JSON.parse(m[1]) as { ok: boolean; state: string; detail: string };
     assert.deepEqual([body.ok, body.state], [true, "matched"]);
-    assert.match(body.detail, /^re-judged .* by operator: was mismatch \(the chain transfer is not a valid x402 NEAR USDC payment .*\); reason: receiver checked on nearblocks$/);
+    assert.match(body.detail, /^re-judged by operator: was mismatch \(the chain transfer is not a valid x402 NEAR USDC payment .*\); reason: receiver checked on nearblocks$/);
     const recon = (await (await get(fixed, "/api/reconcile")).json()) as { counts: { testnet: Record<string, number> } | Record<string, number> };
     const text = JSON.stringify(recon);
     assert.ok(!text.includes(ADMIN) && !text.includes(INGEST), "no key in the answer");
