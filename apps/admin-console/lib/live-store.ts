@@ -24,8 +24,10 @@
  */
 import { short, unitsToDecimal } from "./format.ts";
 import {
+  ATTEST_SUMMARIES,
   EVENT_NAMES,
   type AlertEvent,
+  type AttestSummary,
   type BalanceEntry,
   type ClaimRow,
   type EventName,
@@ -93,7 +95,7 @@ export type LiveState = {
   /** Paid jobs by job id (hello.jobs.recent, then every `job` event); empty until near-watch holds one. */
   jobs: Record<string, JobView>;
   /** Counts per job state and lost compute per network, as near-watch last sent them; null before any job. */
-  jobSummary: { counts: Record<JobState, number>; lostCompute: Record<string, string> } | null;
+  jobSummary: { counts: Record<JobState, number>; lostCompute: Record<string, string>; attestation?: Record<AttestSummary, number> } | null;
   counters: unknown;
   stats: Stats;
   roadStats: Record<string, Partial<Record<Road, RoadStat>>>;
@@ -217,10 +219,17 @@ function asJob(v: unknown): JobView {
   need(typeof v.state === "string" && JOB_STATE_SET.has(v.state), null, "job.state is not a job state");
   need(v.amount === null || (typeof v.amount === "string" && UNITS.test(v.amount)), null, "job.amount is not base units");
   need(v.steps === null || Array.isArray(v.steps), null, "job.steps is not a list");
+  // NEAR AI attestation (ARCH-504): absent on jobs without one; when present, a known summary and a list of calls.
+  if (v.attestation !== undefined) {
+    const a = v.attestation;
+    need(isObj(a) && typeof a.summary === "string" && ATTEST_SET.has(a.summary) && Array.isArray(a.calls) && a.calls.every(isObj), null, "job.attestation is not an attestation");
+  }
   return v as unknown as JobView;
 }
+const ATTEST_SET = new Set<string>(ATTEST_SUMMARIES);
 function asJobSummary(v: unknown): NonNullable<LiveState["jobSummary"]> {
   need(isObj(v) && isObj(v.counts) && isObj(v.lostCompute), null, "job summary lacks counts or lostCompute");
+  need((v as Record<string, unknown>).attestation === undefined || isObj((v as Record<string, unknown>).attestation), null, "job summary attestation is not an object");
   return v as unknown as NonNullable<LiveState["jobSummary"]>;
 }
 
@@ -478,7 +487,8 @@ function apply(state: LiveState, name: EventName, data: unknown, limits: Limits)
       const job = asJob(data.job);
       const summary = asJobSummary(data.summary);
       const before = state.jobs[job.jobId];
-      const jobSummary = { counts: summary.counts, lostCompute: { ...(state.jobSummary?.lostCompute ?? {}), ...summary.lostCompute } };
+      const attestation: Record<AttestSummary, number> | undefined = summary.attestation ?? state.jobSummary?.attestation;
+      const jobSummary = { counts: summary.counts, lostCompute: { ...(state.jobSummary?.lostCompute ?? {}), ...summary.lostCompute }, ...(attestation ? { attestation } : {}) };
       const next = { ...state, jobs: { ...state.jobs, [job.jobId]: job }, jobSummary };
       if (before?.state === job.state) return next;
       const at = job.releasedMs ?? job.expiredMs ?? job.paidMs ?? job.quotedMs ?? job.receivedMs;

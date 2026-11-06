@@ -131,6 +131,12 @@ Expected: `near-watch: ok=True`, at least one road `live` with lag near 0, the r
 After a paid call or paid job in private-ai: the counts in `stack.ps1` go up, and the admin UI shows the claim, the
 chain transfer, the job (`quoted` → `released`) and `matched`.
 
+After a paid job that used the NEAR AI model (with private-ai's `ca-attest` on, its PLAN-private-ai-nearai-attestation.md):
+open http://127.0.0.1:8800/#jobs. The job's **attested** column shows ✓ (or ◐ partial, ✗ unverified, – not applicable).
+The **attested jobs** tile counts it. The job's attestation table shows the chat id and signer address that tab 03 shows.
+To check one reply yourself, paste its chat id at https://cloud.near.ai/verify. A job with no attestation data has a
+blank column, which is normal for jobs that did not use NEAR AI or were run before this feature.
+
 ---
 
 ## D. Stop
@@ -156,7 +162,7 @@ npm --prefix services\near-watch test
 npm --prefix apps\admin-console test
 ```
 
-Expected: 50 and 43 pass.
+Expected: 59 and 48 pass.
 
 ---
 

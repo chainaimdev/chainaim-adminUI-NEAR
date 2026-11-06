@@ -3,6 +3,8 @@
 Build plan for a live **Jobs** tab in `chainaim-adminUI-NEAR` that shows every **paid** tab 03 job of `chainiam-private-ai` from Ask to result released: steps, models, tokens, masking counts, full cost breakdown, payment, reconcile, and jobs that were quoted but never paid.
 Written 2026-11-05. **[read]** = read in the repositories on 2026-11-05. **[owner]** = manual step. No mocks: anything that cannot be proven locally is an owner step with a live acceptance.
 
+Follow-on: `PLAN-adminui-nearai-attestation.md` (ARCH-501…506) adds the NEAR AI model attestation per job (`job_attested` on the same job feed, shown on this tab).
+
 Requirement IDs start at **ARCH-201** so they never collide with `ARCH-001…018` (`architecture-xrpl-migration.md`) or `ARCH-101…115` (paid jobs, `architecture.md`).
 
 ## 1. What this is

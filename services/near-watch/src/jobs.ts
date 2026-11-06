@@ -5,6 +5,8 @@
  *   job_quoted    {v:1, event, ts, jobId, network, amount, totalUsd, expiresAt, steps[], breakdown{}}
  *   job_released  {v:1, event, ts, jobId, network}
  *   job_expired   {v:1, event, ts, jobId, network}
+ *   job_attested  {v:1, event, ts, jobId, network, summary, calls[]}   (PLAN-adminui-nearai-attestation.md ARCH-501..503:
+ *                 the NEAR AI model attestation result private-ai's ca-attest verified; near-watch only stores and shows it)
  * (chainiam-private-ai test-console/console/job-feed.ts builds them.)
  *
  * Fail closed: an event is parsed strictly (every field typed and bounded, unknown fields refused), so nothing but ids,
@@ -22,7 +24,7 @@ import type { Bus } from "./events.ts";
 import type { ClaimRow, JobRow, JobState, ReconState, Store } from "./store.ts";
 
 export const JOB_STATES = ["quoted", "paid", "released", "expired"] as const;
-export const JOB_EVENTS = ["job_quoted", "job_released", "job_expired"] as const;
+export const JOB_EVENTS = ["job_quoted", "job_released", "job_expired", "job_attested"] as const;
 export type JobEventName = (typeof JOB_EVENTS)[number];
 
 /** The paywall's release route for a job (paywall routes.ts): the claim's `route` names the job. */
@@ -53,9 +55,24 @@ export type JobBreakdown = {
   subtotalUsd?: string; withMarginUsd?: string;
 };
 
+/** NEAR AI model attestation of a job (ARCH-501): verified elsewhere (private-ai ca-attest), stored and shown here. */
+export const ATTEST_SUMMARIES = ["attested", "partial", "unverified", "not_applicable"] as const;
+export type AttestSummary = (typeof ATTEST_SUMMARIES)[number];
+export const ATTEST_STATUSES = ["verified", "unverified", "unavailable", "not_applicable"] as const;
+export type AttestStatus = (typeof ATTEST_STATUSES)[number];
+/** One model call's evidence: ids, an address, a report time, check results (null = not checked) and a short reason. */
+export type AttestedCall = {
+  step: "query" | "answer"; model: string; servedModel: string | null; providerId: string | null;
+  signatureKind: "provider_tee" | "gateway" | null; signingAlgo: "ecdsa" | "ed25519" | null; signingAddress: string | null;
+  reportFetchedMs: number | null; tdx: boolean | null; gpu: boolean | null; signature: boolean | null; hashes: boolean | null;
+  status: AttestStatus; reason: string | null;
+};
+export type JobAttestation = { tsMs: number; summary: AttestSummary; calls: AttestedCall[]; receivedMs: number };
+
 export type JobEventInput =
   | { event: "job_quoted"; tsMs: number; jobId: string; network: string; amount: string; totalUsd: string; expiresMs: number; steps: JobStep[]; breakdown: JobBreakdown }
-  | { event: "job_released" | "job_expired"; tsMs: number; jobId: string; network: string };
+  | { event: "job_released" | "job_expired"; tsMs: number; jobId: string; network: string }
+  | { event: "job_attested"; tsMs: number; jobId: string; network: string; summary: AttestSummary; calls: AttestedCall[] };
 
 // ---- strict parsing ----
 
@@ -139,6 +156,57 @@ function parseBreakdown(v: unknown): JobBreakdown {
   };
 }
 
+// ---- job_attested (ARCH-501) ----
+
+/** NEAR AI chat id / provider id: an id, never text. */
+const PROVIDER_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
+/** ecdsa signer: an Ethereum-style address; ed25519 signer: a 32-byte public key in hex. */
+const ECDSA_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const ED25519_KEY = /^(0x)?[0-9a-fA-F]{64}$/;
+/** A verifier's short reason: printable ASCII on one line, at most 200 characters. */
+const REASON = /^[\x20-\x7E]{1,200}$/;
+const ATTESTED_CALL_FIELDS = ["step", "model", "servedModel", "providerId", "signatureKind", "signingAlgo", "signingAddress", "reportFetchedAt", "tdx", "gpu", "signature", "hashes", "status", "reason"];
+
+const isNone = (v: unknown): boolean => v === undefined || v === null;
+function oneOf<T extends string>(v: unknown, field: string, allowed: readonly T[]): T {
+  if (typeof v !== "string" || !(allowed as readonly string[]).includes(v)) throw new IngestError(`${field} must be one of ${allowed.join(", ")}`);
+  return v as T;
+}
+/** true / false = checked and passed / failed; null (or absent) = not checked. */
+function check(v: unknown, field: string): boolean | null {
+  if (isNone(v)) return null;
+  if (typeof v !== "boolean") throw new IngestError(`${field} must be true, false or null`);
+  return v;
+}
+
+function parseAttestedCall(v: unknown, i: number): AttestedCall {
+  const at = `calls[${i}]`;
+  if (!isObj(v)) throw new IngestError(`${at} must be an object`);
+  only(v, ATTESTED_CALL_FIELDS, at);
+  const signingAlgo = isNone(v.signingAlgo) ? null : oneOf(v.signingAlgo, `${at}.signingAlgo`, ["ecdsa", "ed25519"] as const);
+  let signingAddress: string | null = null;
+  if (!isNone(v.signingAddress)) {
+    if (signingAlgo === null) throw new IngestError(`${at}.signingAddress needs ${at}.signingAlgo`);
+    signingAddress = signingAlgo === "ecdsa" ? str(v.signingAddress, `${at}.signingAddress`, ECDSA_ADDRESS, 42) : str(v.signingAddress, `${at}.signingAddress`, ED25519_KEY, 66);
+  }
+  return {
+    step: oneOf(v.step, `${at}.step`, ["query", "answer"] as const),
+    model: str(v.model, `${at}.model`, MODEL_ID, 128),
+    servedModel: isNone(v.servedModel) ? null : str(v.servedModel, `${at}.servedModel`, MODEL_ID, 128),
+    providerId: isNone(v.providerId) ? null : str(v.providerId, `${at}.providerId`, PROVIDER_ID, 128),
+    signatureKind: isNone(v.signatureKind) ? null : oneOf(v.signatureKind, `${at}.signatureKind`, ["provider_tee", "gateway"] as const),
+    signingAlgo,
+    signingAddress,
+    reportFetchedMs: isNone(v.reportFetchedAt) ? null : isoMs(v.reportFetchedAt, `${at}.reportFetchedAt`),
+    tdx: check(v.tdx, `${at}.tdx`),
+    gpu: check(v.gpu, `${at}.gpu`),
+    signature: check(v.signature, `${at}.signature`),
+    hashes: check(v.hashes, `${at}.hashes`),
+    status: oneOf(v.status, `${at}.status`, ATTEST_STATUSES),
+    reason: isNone(v.reason) ? null : str(v.reason, `${at}.reason`, REASON, 200),
+  };
+}
+
 export function parseJobEvent(input: unknown, caips: CaipMap): JobEventInput {
   if (!isObj(input)) throw new IngestError("a job event must be a JSON object");
   if (input.v !== 1) throw new IngestError("v must be 1");
@@ -146,6 +214,11 @@ export function parseJobEvent(input: unknown, caips: CaipMap): JobEventInput {
   if (typeof event !== "string" || !(JOB_EVENTS as readonly string[]).includes(event)) throw new IngestError(`event must be one of ${JOB_EVENTS.join(", ")}`);
   if (typeof input.jobId !== "string" || !JOB_ID.test(input.jobId)) throw new IngestError("jobId must be 32 lowercase hex characters");
   const base = { tsMs: isoMs(input.ts, "ts"), jobId: input.jobId, network: watchedNetwork(input.network, caips) };
+  if (event === "job_attested") {
+    only(input, ["v", "event", "ts", "jobId", "network", "summary", "calls"], event);
+    if (!Array.isArray(input.calls) || input.calls.length > MAX_STEPS) throw new IngestError(`calls must be a list of at most ${MAX_STEPS}`);
+    return { event, ...base, summary: oneOf(input.summary, "summary", ATTEST_SUMMARIES), calls: input.calls.map(parseAttestedCall) };
+  }
   if (event !== "job_quoted") {
     only(input, ["v", "event", "ts", "jobId", "network"], event);
     return { event: event as "job_released" | "job_expired", ...base };
@@ -187,9 +260,12 @@ export type JobView = JobRow & {
   invoiceId: string | null;
   payer: string | null;
   reconcile: ReconState | null;
+  /** The NEAR AI model attestation (ARCH-503): present only when a job_attested was stored for this job. */
+  attestation?: JobAttestation;
 };
 export type JobCounts = Record<JobState, number>;
-export type JobsSummary = { counts: JobCounts; lostCompute: Record<string, string> };
+/** attestation: known jobs per attestation summary; present only once any job_attested is stored. */
+export type JobsSummary = { counts: JobCounts; lostCompute: Record<string, string>; attestation?: Record<AttestSummary, number> };
 
 export class JobBook {
   readonly counters = { events: 0, repeats: 0, unknownClaims: 0 };
@@ -214,6 +290,7 @@ export class JobBook {
     const prev = this.store.getJob(e.jobId);
     if (prev && prev.network !== e.network) throw new IngestError(`job ${e.jobId} is on ${prev.network}, not ${e.network}`);
     const t = this.now();
+    if (e.event === "job_attested") return this.attested(e, prev, t);
     let next: JobRow;
     if (e.event === "job_quoted") {
       if (prev?.quotedMs != null) return this.repeat();
@@ -264,10 +341,30 @@ export class JobBook {
     if (job) this.emit(job);
   }
 
+  /**
+   * job_attested (ARCH-501/502): stored against the job id whether or not the job is known yet (it may arrive before
+   * job_quoted, after job_released, or after a restart). The newest event per job wins; an older or identical one is a
+   * repeat. The job is re-sent on the stream only when near-watch already has it.
+   */
+  private attested(e: Extract<JobEventInput, { event: "job_attested" }>, job: JobRow | undefined, t: number): { isNew: boolean } {
+    const prev = this.store.getAttestation(e.jobId);
+    if (prev && prev.network !== e.network) throw new IngestError(`job ${e.jobId} is on ${prev.network}, not ${e.network}`);
+    if (prev && (prev.tsMs > e.tsMs || (prev.tsMs === e.tsMs && prev.summary === e.summary && JSON.stringify(prev.calls) === JSON.stringify(e.calls)))) return this.repeat();
+    this.store.putAttestation(e.jobId, e.network, { tsMs: e.tsMs, summary: e.summary, calls: e.calls, receivedMs: t });
+    this.counters.events += 1;
+    if (job) this.emit(job);
+    return { isNew: true };
+  }
+
   view(job: JobRow): JobView {
     const claim = job.txHash ? this.store.getClaim(job.network, job.txHash) : undefined;
     const recon = job.txHash ? this.store.getRecon(job.network, job.txHash) : undefined;
-    return { ...job, noJobEvent: job.quotedMs === null, invoiceId: claim?.invoiceId ?? null, payer: claim?.payer ?? null, reconcile: recon?.state ?? null };
+    const att = this.store.getAttestation(job.jobId);
+    // `attestation` only when one is stored (ARCH-503): a job without one is exactly as before.
+    return {
+      ...job, noJobEvent: job.quotedMs === null, invoiceId: claim?.invoiceId ?? null, payer: claim?.payer ?? null, reconcile: recon?.state ?? null,
+      ...(att ? { attestation: { tsMs: att.tsMs, summary: att.summary, calls: att.calls, receivedMs: att.receivedMs } } : {}),
+    };
   }
 
   summary(network?: string): JobsSummary {
@@ -277,7 +374,8 @@ export class JobBook {
       for (const b of this.store.expiredBreakdowns(n)) micros += lostOf(b);
       lost[n] = usdText(micros);
     }
-    return { counts: this.store.jobCounts(network), lostCompute: lost };
+    // `attestation` (jobs per attestation summary) only once any attestation is stored (ARCH-503).
+    return { counts: this.store.jobCounts(network), lostCompute: lost, ...(this.store.hasAttestations() ? { attestation: this.store.attestationCounts(network) } : {}) };
   }
 
   /** The snapshot's `jobs`: only when at least one job exists (ARCH-201: no new key otherwise). */

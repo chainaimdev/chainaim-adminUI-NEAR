@@ -13,7 +13,7 @@ The first road to deliver a transaction wins. Later roads are stored with their 
 
 ```powershell
 npm install
-npm test                 # 50 tests: decoder, store, reconcile (incl. late arrival), config (CAIP-2 default), RPC read-ahead, paid jobs, relayer gas, chain-core, end-to-end over the recorded-data doubles
+npm test                 # 59 tests: decoder, store, reconcile (incl. late arrival), config (CAIP-2 default), RPC read-ahead, paid jobs, NEAR AI attestation per job, relayer gas, chain-core, end-to-end over the recorded-data doubles
 npx tsc -p .             # typecheck
 node --env-file=$SECRETS\near-watch.env src/main.ts --watch buyer1=buyer=<buyer>.testnet
 node src/main.ts --help  # every flag and its default
@@ -22,6 +22,22 @@ node src/main.ts --help  # every flag and its default
 Endpoints: `/healthz`, `/api/snapshot`, `/api/txs`, `/api/tx/<hash>`, `/api/feeds`, `/api/claims`, `/api/reconcile`, `/api/metrics`, `/api/trace/<invoiceId>`, `/api/seller`, `/api/jobs`, `/api/job/<jobId>`, SSE `/stream`, and `POST /ingest/claim|trace|job`.
 
 **Paid jobs** (architecture-adminui-jobs.md ARCH-206..208, `src/jobs.ts`). `POST /ingest/job` takes the private-ai test console's `job_quoted` / `job_released` / `job_expired` events (`--job-feed-url` there). Each event is parsed strictly: every field is typed and bounded, unknown fields are refused, and a bad event is refused whole and alerted `job_refused`. So only ids, times, amounts, model ids, zones and counts are stored. A job is joined to the paywall's claim for `POST /v1/jobs/<jobId>/release`, and through it to the transfer and its reconcile state. States: `quoted` → `paid` → `released`, or `expired` if no claim is linked. A claim for a job never quoted here is shown as `paid` with no job event, and raises `job_unknown` once. Lost compute = model cost + call fees + analyst fee of expired jobs. The snapshot has `jobs` and SSE sends `job` only once a job exists. Everything else is unchanged; the new `jobs` table is created with IF NOT EXISTS.
+
+**NEAR AI model attestation** (PLAN-adminui-nearai-attestation.md ARCH-501..503). `POST /ingest/job` also takes `job_attested` `{v:1, event, ts, jobId, network, summary, calls[]}`. It is the result private-ai's `ca-attest` verified; near-watch verifies nothing and never holds the NEAR AI key.
+- **Values:**
+  - `summary`: `attested` | `partial` | `unverified` | `not_applicable`.
+  - Per call:
+    - `step` (`query` | `answer`) and `model`.
+    - `servedModel` and `providerId` (chat id): `[A-Za-z0-9_.:-]`, at most 128.
+    - `signatureKind` (`provider_tee` | `gateway`) and `signingAlgo` (`ecdsa` | `ed25519`).
+    - `signingAddress`: 0x + 40 hex for ecdsa, a 32-byte hex key for ed25519.
+    - `reportFetchedAt`: ISO time.
+    - `tdx`, `gpu`, `signature`, `hashes`: `true` / `false`, or `null` = not checked.
+    - `status`: `verified` | `unverified` | `unavailable` | `not_applicable`.
+    - `reason`: printable ASCII, one line, at most 200.
+- **Strict:** unknown fields are refused, as for the other job events.
+- **Storage:** the result goes in the new table `job_attestations`. The newest event per job wins; an older or identical one is a repeat. It is kept even before the job is known.
+- **Output:** a job's view carries `attestation`, and the jobs summary carries `attestation` counts, only once one is stored. Otherwise every response is as before.
 
 **Relayer gas** (ARCH-209). `--watch relayer=relayer=<account> --gas-per-payment-near D` reads the relayer's NEAR balance like the others. It raises `low_gas` (warn) when that covers fewer than `--relayer-min-payments` payments (default 500), at most once per `--alert-every-sec`. A watched relayer without `--gas-per-payment-near` stops start-up. The Seller wallet and Live ops panels ignore the role.
 

@@ -22,6 +22,8 @@
  *   GET /api/jobs?limit=&network=&state=   jobs newest first, counts per state, lost compute
  *   GET /api/job/<jobId>                one job: steps, breakdown, linked claim, transfer and reconcile state
  *   The snapshot carries `jobs` only once a job exists.
+ *   NEAR AI model attestation (PLAN-adminui-nearai-attestation.md ARCH-501..503): job_attested comes in on /ingest/job too;
+ *   a job's view carries `attestation` and the summary `attestation` counts only once one is stored.
  * Seller Wallet (when started with it): GET /api/seller (src/seller.ts) and `seller` in the snapshot.
  * Every /api and /stream call needs the admin key, sent as
  * `x-admin-key: <key>` or `authorization: Bearer <key>`; the console's server

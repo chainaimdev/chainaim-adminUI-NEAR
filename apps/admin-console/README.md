@@ -12,8 +12,8 @@ The browser never sees near-watch's address, endpoint URLs or the admin key.
 
 | Do | See |
 |---|---|
-| `npm install` then `npm test` | 43 tests pass; proxy / stream / store / jobs tests start the real near-watch `WatchServer` on its recorded testnet x402 payment (no memo; matched by tx hash) |
-| open **Jobs** (`#jobs`) | every paid tab 03 job the private-ai console reported: counts per state, lost compute, the job list (time, job, payer, network, total, state, reconcile); for the selected job the step strip, the step table (time, model, zone, tokens in/out, masking counts, residual, cost) and the full breakdown. No text is ever received (architecture-adminui-jobs.md ARCH-210) |
+| `npm install` then `npm test` | 48 tests pass; proxy / stream / store / jobs / attestation tests start the real near-watch `WatchServer` on its recorded testnet x402 payment (no memo; matched by tx hash) |
+| open **Jobs** (`#jobs`) | every paid tab 03 job the private-ai console reported: counts per state, lost compute, the job list (time, job, payer, network, total, state, reconcile); for the selected job the step strip, the step table (time, model, zone, tokens in/out, masking counts, residual, cost) and the full breakdown. With NEAR AI attestation (PLAN-adminui-nearai-attestation.md ARCH-504): an attested column, an "attested jobs N of M" tile and a per-call attestation table. No text is ever received (architecture-adminui-jobs.md ARCH-210) |
 | `npm run build`, then `node --env-file=<private env> scripts/console.ts --mode start` (near-watch running) | console on http://127.0.0.1:8800 |
 | open **Live ops** | header chip `NEAR TESTNET` (best road, state, final block height) and one chip per road (neardata, qn-rpc, rpc); Seller wallet row; flow canvas; feed race |
 | make one paid call (paywall `PAY_RAILS=near`) | `claim` and `tx` in the change log; the transfer on **Ledger** with the road that won (chip) and later roads `+N ms`; **Reconcile** shows `matched` after the grace |

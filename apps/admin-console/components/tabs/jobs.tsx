@@ -12,8 +12,87 @@
 import { useState } from "react";
 import { clock, short, unitsToDecimal } from "../../lib/format.ts";
 import { labelOf, txKey, type LiveState } from "../../lib/live-store.ts";
-import { JOB_STATES, type JobStep, type JobView } from "../../lib/types.ts";
+import { JOB_STATES, type AttestSummary, type JobStep, type JobView } from "../../lib/types.ts";
 import { Measured, Reported, TxLink } from "../ui.tsx";
+
+/**
+ * NEAR AI model attestation (PLAN-adminui-nearai-attestation.md ARCH-504). Verified by private-ai's ca-attest, only shown
+ * here. No data yet → blank, never "unverified".
+ */
+const ATTEST_MARK: Record<AttestSummary, [string, string]> = {
+  attested: ["✓", "attested: every NEAR AI call verified (TEE report, reply signature, hashes)"],
+  partial: ["◐", "partial: some NEAR AI calls verified"],
+  unverified: ["✗", "unverified: a NEAR AI call failed verification"],
+  not_applicable: ["–", "not applicable: no NEAR AI model call in this job"],
+};
+const ATTEST_CLASS: Record<AttestSummary, string> = { attested: "matched", partial: "only_on_ledger", unverified: "mismatch", not_applicable: "pending" };
+/** A check result: passed, failed, or not checked. */
+const tick = (v: boolean | null): string => (v === null ? "not checked" : v ? "✓" : "✗");
+/** NEAR AI's own checker for one reply (docs.near.ai/cloud/verification). */
+const NEAR_AI_VERIFY = "https://cloud.near.ai/verify";
+
+function AttestationTable({ j }: { j: JobView }) {
+  const a = j.attestation;
+  if (!a) return null;
+  return (
+    <div className="panel tw">
+      <table className="wide">
+        <thead>
+          <tr>
+            <th>step</th>
+            <th>model</th>
+            <th>NEAR AI model id</th>
+            <th>chat id</th>
+            <th>signature kind</th>
+            <th>signer</th>
+            <th>report time</th>
+            <th title="Intel TDX quote of the model's TEE">TDX</th>
+            <th title="NVIDIA GPU evidence">GPU</th>
+            <th title="Reply signature recovered to the report's signer">signature</th>
+            <th title="Signed request / response hashes equal the gateway's">hashes</th>
+            <th>status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {a.calls.length === 0 ? (
+            <tr>
+              <td colSpan={12} className="empty">
+                No model calls in this attestation.
+              </td>
+            </tr>
+          ) : (
+            a.calls.map((c, i) => (
+              <tr key={i}>
+                <td>{c.step}</td>
+                <td>{c.model}</td>
+                <td>{c.servedModel ?? "—"}</td>
+                <td title={c.providerId ?? undefined}>{c.providerId ? short(c.providerId, 12, 6) : "—"}</td>
+                <td>{c.signatureKind ?? "—"}</td>
+                <td title={c.signingAddress ?? undefined}>{c.signingAddress ? `${short(c.signingAddress, 8, 6)} (${c.signingAlgo})` : "—"}</td>
+                <td>{clock(c.reportFetchedMs)}</td>
+                <td>{tick(c.tdx)}</td>
+                <td>{tick(c.gpu)}</td>
+                <td>{tick(c.signature)}</td>
+                <td>{tick(c.hashes)}</td>
+                <td className={`st ${c.status === "verified" ? "matched" : c.status === "unverified" ? "mismatch" : "pending"}`}>
+                  {c.status.replaceAll("_", " ")}
+                  {c.reason && <span className="muted"> · {c.reason}</span>}
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+      <div className="muted">
+        Model attestation {a.summary.replaceAll("_", " ")} · received {clock(a.receivedMs)} · Check it yourself:{" "}
+        <a href={NEAR_AI_VERIFY} target="_blank" rel="noreferrer">
+          cloud.near.ai/verify
+        </a>{" "}
+        (paste a chat id)
+      </div>
+    </div>
+  );
+}
 
 const when = (j: JobView): number => j.quotedMs ?? j.paidMs ?? j.receivedMs;
 const counts = (c: Record<string, number> | null): string =>
@@ -187,7 +266,7 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
           <h2 className="q">What did each paid job run, cost and earn?</h2>
         </div>
       </div>
-      <div className="kpis six">
+      <div className="kpis seven">
         {JOB_STATES.map((s) => (
           <div className="kpi" key={s}>
             <span>{s}</span>
@@ -199,6 +278,11 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
           <span title="Model cost + call fees + analyst fee of jobs quoted but never paid (gas and margin were never spent)">lost compute</span>
           <strong className="warn">{summary ? Object.entries(summary.lostCompute).map(([n, v]) => (live.networks.length > 1 ? `${n} $${v}` : `$${v}`)).join(" · ") || "$0.000000" : "—"}</strong>
           <em>expired jobs</em>
+        </div>
+        <div className="kpi">
+          <span title="Jobs whose NEAR AI model calls were all verified, of all jobs (from private-ai's ca-attest)">attested jobs</span>
+          <strong className="ok">{summary?.attestation ? `${summary.attestation.attested} of ${Object.values(summary.counts).reduce((n, c) => n + c, 0)}` : "—"}</strong>
+          <em>NEAR AI model</em>
         </div>
         <div className="kpi">
           <span>jobs shown</span>
@@ -221,12 +305,13 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
               <th>
                 reconcile <Measured />
               </th>
+              <th title="NEAR AI model attestation: ✓ attested · ◐ partial · ✗ unverified · – not applicable · blank = no data yet">attested</th>
             </tr>
           </thead>
           <tbody>
             {jobs.length === 0 ? (
               <tr>
-                <td colSpan={7} className="empty">
+                <td colSpan={8} className="empty">
                   No paid jobs yet. They appear when the private-ai test console runs with --paid-jobs on and --job-feed-url pointing at near-watch.
                 </td>
               </tr>
@@ -240,6 +325,9 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
                   <td className="r">{usd(j.totalUsd)}</td>
                   <td className={`st ${j.state}`}>{stateText(j)}</td>
                   <td className={`st ${recon(j) ?? ""}`}>{recon(j)?.replaceAll("_", " ") ?? "—"}</td>
+                  <td className={j.attestation ? `st ${ATTEST_CLASS[j.attestation.summary]}` : ""} title={j.attestation ? ATTEST_MARK[j.attestation.summary][1] : undefined}>
+                    {j.attestation ? ATTEST_MARK[j.attestation.summary][0] : ""}
+                  </td>
                 </tr>
               ))
             )}
@@ -263,6 +351,7 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
           </div>
           <Strip j={sel} />
           <StepTable j={sel} />
+          <AttestationTable j={sel} />
           <Breakdown j={sel} decimalsOf={decimalsOf} />
         </>
       )}
@@ -271,7 +360,8 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
         Steps, models, tokens, masking counts and the breakdown are the test console&apos;s <code>job_quoted</code> event (kinds and counts only: near-watch refuses an event
         that carries any text). Paid = the paywall&apos;s claim for <code>POST /v1/jobs/&lt;jobId&gt;/release</code>; reconcile is that claim against the chain transfer, as on
         the Reconcile tab. Released = the console confirmed the paywall took the result; expired = the quote passed its expiry unpaid. Lost compute = model cost + call fees +
-        analyst fee of expired jobs.
+        analyst fee of expired jobs. Attested = the console&apos;s <code>job_attested</code> event: private-ai&apos;s ca-attest checked each NEAR AI call&apos;s TEE report, reply
+        signature and hashes; near-watch and this page only show its result.
       </div>
     </section>
   );

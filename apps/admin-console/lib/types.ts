@@ -187,7 +187,7 @@ export type Snapshot = {
   /** The token near-watch counts (from ft_metadata at its start-up). */
   token?: { contract: string; symbol: string; decimals: number };
   /** Paid jobs (architecture-adminui-jobs.md ARCH-208): present only once near-watch holds a job. */
-  jobs?: { counts: Record<JobState, number>; recent: JobView[]; lostCompute: Record<string, string> };
+  jobs?: { counts: Record<JobState, number>; recent: JobView[]; lostCompute: Record<string, string>; attestation?: Record<AttestSummary, number> };
 };
 
 /** Paid jobs (near-watch src/jobs.ts). Ids, times, amounts, model ids, zones and counts only: no text is ever sent. */
@@ -215,8 +215,22 @@ export type JobView = {
   /** A claim paid this job but near-watch never received its job_quoted. */
   noJobEvent: boolean;
   invoiceId: string | null; payer: string | null; reconcile: ReconState | null;
+  /** NEAR AI model attestation (PLAN-adminui-nearai-attestation.md ARCH-503): only when near-watch stored a job_attested. */
+  attestation?: JobAttestation;
 };
-export type JobsSummary = { counts: Record<JobState, number>; lostCompute: Record<string, string> };
+/** NEAR AI model attestation, as private-ai's ca-attest verified it (near-watch src/jobs.ts): ids, an address, times, checks. */
+export const ATTEST_SUMMARIES = ["attested", "partial", "unverified", "not_applicable"] as const;
+export type AttestSummary = (typeof ATTEST_SUMMARIES)[number];
+export type AttestedCall = {
+  step: "query" | "answer"; model: string; servedModel: string | null; providerId: string | null;
+  signatureKind: "provider_tee" | "gateway" | null; signingAlgo: "ecdsa" | "ed25519" | null; signingAddress: string | null;
+  /** null = not checked */
+  reportFetchedMs: number | null; tdx: boolean | null; gpu: boolean | null; signature: boolean | null; hashes: boolean | null;
+  status: "verified" | "unverified" | "unavailable" | "not_applicable"; reason: string | null;
+};
+export type JobAttestation = { tsMs: number; summary: AttestSummary; calls: AttestedCall[]; receivedMs: number };
+/** attestation: known jobs per attestation summary, present only once near-watch stored any job_attested. */
+export type JobsSummary = { counts: Record<JobState, number>; lostCompute: Record<string, string>; attestation?: Record<AttestSummary, number> };
 export type JobEvent = { job: JobView; summary: JobsSummary };
 
 export type TxEvent = { row: Row; via: Road; lagMs: number | null; network?: string; links?: Links };

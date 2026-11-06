@@ -68,8 +68,9 @@ The first road to deliver a transfer wins; the others are recorded with their la
 
 | Do | See |
 |---|---|
-| `npm --prefix services\near-watch test` | 50 tests pass, over a recorded real TestNet x402 NEAR payment (`H3ZFsVY1…`, 0.01 USDC, a relayed NEP-366 delegate `ft_transfer` with no memo): roads, reconcile, late claims and late transfers, restart without duplicates, paid jobs, relayer gas alert, no key in any API response |
-| `npm --prefix apps\admin-console test` | 43 tests pass (proxy rules, SSE pass-through, store and derive over a real near-watch, jobs) |
+| `npm --prefix services\near-watch test` | 59 tests pass, over a recorded real TestNet x402 NEAR payment (`H3ZFsVY1…`, 0.01 USDC, a relayed NEP-366 delegate `ft_transfer` with no memo): roads, reconcile, late claims and late transfers, restart without duplicates, paid jobs, NEAR AI attestation per job, relayer gas alert, no key in any API response |
+| `npm --prefix apps\admin-console test` | 48 tests pass (proxy rules, SSE pass-through, store and derive over a real near-watch, jobs, attestation) |
+| A paid job using the NEAR AI model, with private-ai's `ca-attest` on | **Jobs** shows it **attested ✓** (◐ partial · ✗ unverified · – not applicable; blank = no data), the "attested jobs N of M" tile, and per model call the chat id, signer, report time and TDX / GPU / signature / hashes checks, with a link to https://cloud.near.ai/verify. near-watch only stores and shows the result; it never holds the NEAR AI key (PLAN-adminui-nearai-attestation.md) |
 | `.\nearadminup.ps1`, then open http://127.0.0.1:8800 | Header chips show each road and the final block height; blocks stream in about every second |
 | One paid call or paid job in private-ai | **Live ops** shows a `claim` and a chain `tx`; **Jobs** shows `quoted` → `released`; **Reconcile** shows `matched` within `--settle-grace-blocks` (30) |
 | `docker compose restart near-watch` | It backfills from its saved cursor; no transfer appears twice |

@@ -34,3 +34,34 @@
 - New config/near-watch-watch.conf (WATCH=label=role=account lines, GAS_PER_PAYMENT_NEAR; committed, not secret) with today's exact values. up.ps1: -WatchFile (default that file), -Watch / -GasPerPaymentNear (one start), -DryRun (writes runtime/compose/near-watch.yml, checks it with compose, prints near-watch's command only, starts nothing). Without the file and without -Watch, docker-compose.yml's own command runs. .gitignore: runtime/. cmd.md A4 updated. near-watch source unchanged.
 - Compose alone → `--bind 0.0.0.0 --port 8790 --store /data/watch.sqlite --watch buyer1=buyer=chainaim-buyer-seller.testnet --watch relayer=relayer=chainaim-relayer-seller.testnet --gas-per-payment-near 0.000333`; `.\up.ps1 -DryRun` → the same command; `-Watch buyer1=...,t02=buyer=chainaim-t02-seller.testnet,t03=buyer=chainaim-t03-seller.testnet,relayer=...` → four --watch entries; `-Watch "bad entry"` → refused.
 - Tests: services/near-watch 50/50, apps/admin-console 43/43. ca-near-watch was not restarted. Owner: add the tenant lines (M4 in chainiam-private-ai MANUAL_SETUP.md), then .\down.ps1; .\up.ps1.
+
+## 2026-11-06: NEAR AI model attestation per paid job (PLAN-adminui-nearai-attestation.md ARCH-501..505)
+- Before: near-watch 50/50, admin-console 43/43. Re-read jobs.ts, store.ts, server.ts, liveops.ts, events.ts, lib/types.ts, lib/live-store.ts and components/tabs/jobs.tsx. The job row and its table are in store.ts (CREATE IF NOT EXISTS, schema 2). Copies of the originals are in the session scratchpad (attest-before/).
+- ARCH-501 (`services/near-watch/src/jobs.ts`): JOB_EVENTS gains `job_attested`, with a strict parser in the shape of the companion plan's ARCH-412. Unknown fields are refused; each bad field is refused (400) with the field named; the ingest key is unchanged.
+  - Choices the plan left open: `step` is `query` | `answer` (the model steps job_quoted carries). The ed25519 key is 64 hex, with or without 0x. `reason` is printable ASCII.
+  - `reportFetchedAt` is stored as `reportFetchedMs`, the same naming as the job row's ms fields.
+- ARCH-502 (`store.ts`): new table `job_attestations` (job_id PK, network, ts_ms, summary, calls_json, received_ms). No existing table is altered; schema stays 2.
+  - The newest event per job replaces the stored one; an older or identical one counts as a repeat.
+  - An attestation is kept even before its job is known, and no job row is made from it.
+- ARCH-503: `JobBook.view` adds `attestation` only when one is stored; `summary` adds `attestation` counts (known jobs per summary) only once any is stored. So /api/jobs, /api/job/<id>, SSE `job` and the snapshot are unchanged otherwise. server.ts changed by a comment only.
+- ARCH-504:
+  - `lib/types.ts`: JobAttestation, AttestedCall, ATTEST_SUMMARIES.
+  - `lib/live-store.ts`: asJob checks an attestation when one is present; the summary keeps its `attestation` counts.
+  - `components/tabs/jobs.tsx`:
+    - an "attested" column (✓ attested · ◐ partial · ✗ unverified · – not applicable · blank = no data);
+    - an "attested jobs N of M" tile, with KPIs changed from `six` to `seven` (an existing CSS class);
+    - a per-call attestation table with a cloud.near.ai/verify link.
+  - globals.css is unchanged.
+- Tests:
+  - `services/near-watch/test/attestation.test.ts` (9): real app over the recorded-data doubles, real SQLite file, restart.
+  - `apps/admin-console/test/attestation.test.ts` (5): the real near-watch WatchServer through proxyStream and proxyGet.
+  - Existing tests unchanged.
+- After (ARCH-505):
+  - near-watch 59/59, `npx tsc -p .` OK.
+  - admin-console 48/48, `npx tsc -p .` OK.
+  - `npm run build` OK in a copy of the app, because the live admin UI (8800) serves apps/admin-console/.next and was not touched.
+- Not done:
+  - The tab has not been rendered in a browser.
+  - ca-near-watch was not rebuilt and the 8800 UI was not restarted; both are owner steps.
+  - private-ai has no `job_attested` sender yet (its plan ARCH-412). Until then the column stays blank.
+  - ARCH-506 (live) is an owner step.

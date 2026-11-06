@@ -11,6 +11,8 @@
  *   jobs    one row per paid job (architecture-adminui-jobs.md ARCH-206): its state, quote, steps and the tx hash of the
  *           claim that paid it; created only when job events or job claims arrive (CREATE IF NOT EXISTS, no other
  *           table changes, so the schema version stays 2)
+ *   job_attestations  the newest NEAR AI model attestation per job (PLAN-adminui-nearai-attestation.md ARCH-502), likewise
+ *           a new table only
  * A transfer is tied to an invoice only through its claim (same network and tx hash): an x402 NEAR transfer carries
  * no memo (chainiam-private-ai docs/NEAR-GATES.md G3), so the chain side has no invoice of its own.
  * Schema 2 (from 1): txs.invoice_id is gone, and stored rows are re-judged by the memo-free x402 rule (migrate1to2).
@@ -22,7 +24,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Row } from "./decode.ts";
-import type { JobBreakdown, JobStep } from "./jobs.ts";
+import type { AttestedCall, AttestSummary, JobAttestation, JobBreakdown, JobStep } from "./jobs.ts";
 
 export const SCHEMA_VERSION = 2;
 
@@ -165,6 +167,13 @@ export class Store {
         breakdown_json TEXT, steps_json TEXT, received_ms INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS jobs_tx ON jobs (network, tx_hash);
       CREATE INDEX IF NOT EXISTS jobs_received ON jobs (received_ms);
+    `);
+    // NEAR AI model attestation per job (PLAN-adminui-nearai-attestation.md ARCH-502): a new table only; the newest
+    // job_attested per job replaces the one before. Keyed by job id alone, so it may come before the job's row.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS job_attestations (
+        job_id TEXT PRIMARY KEY, network TEXT NOT NULL, ts_ms INTEGER NOT NULL, summary TEXT NOT NULL, calls_json TEXT NOT NULL,
+        received_ms INTEGER NOT NULL);
     `);
     const v = this.db.prepare("SELECT value FROM meta WHERE key = 'schema'").get() as { value: string } | undefined;
     if (!v) this.db.prepare("INSERT INTO meta (key, value) VALUES ('schema', ?)").run(String(SCHEMA_VERSION));
@@ -565,6 +574,37 @@ export class Store {
   /** The quote breakdowns of expired jobs on `network` (lost compute, src/jobs.ts). */
   expiredBreakdowns(network: string): JobBreakdown[] {
     return (this.db.prepare("SELECT breakdown_json FROM jobs WHERE network = ? AND state = 'expired' AND breakdown_json IS NOT NULL").all(network) as { breakdown_json: string }[]).map((r) => JSON.parse(r.breakdown_json) as JobBreakdown);
+  }
+
+  // ---- NEAR AI model attestation per job (ARCH-502) ----
+
+  getAttestation(jobId: string): (JobAttestation & { network: string }) | undefined {
+    const r = this.db.prepare("SELECT * FROM job_attestations WHERE job_id = ?").get(jobId) as
+      | { job_id: string; network: string; ts_ms: number; summary: string; calls_json: string; received_ms: number }
+      | undefined;
+    return r ? { network: r.network, tsMs: r.ts_ms, summary: r.summary as AttestSummary, calls: JSON.parse(r.calls_json) as AttestedCall[], receivedMs: r.received_ms } : undefined;
+  }
+
+  putAttestation(jobId: string, network: string, a: JobAttestation): void {
+    this.db
+      .prepare(
+        `INSERT INTO job_attestations (job_id, network, ts_ms, summary, calls_json, received_ms) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (job_id) DO UPDATE SET ts_ms = excluded.ts_ms, summary = excluded.summary, calls_json = excluded.calls_json, received_ms = excluded.received_ms`,
+      )
+      .run(jobId, network, a.tsMs, a.summary, JSON.stringify(a.calls), a.receivedMs);
+  }
+
+  hasAttestations(): boolean {
+    return this.db.prepare("SELECT 1 FROM job_attestations LIMIT 1").get() !== undefined;
+  }
+
+  /** Known jobs (rows in jobs) per attestation summary. */
+  attestationCounts(network?: string): Record<AttestSummary, number> {
+    const out: Record<AttestSummary, number> = { attested: 0, partial: 0, unverified: 0, not_applicable: 0 };
+    const sql = `SELECT a.summary AS summary, COUNT(*) AS n FROM job_attestations a JOIN jobs j ON j.job_id = a.job_id ${network ? "WHERE j.network = ?" : ""} GROUP BY a.summary`;
+    const rows = (network ? this.db.prepare(sql).all(network) : this.db.prepare(sql).all()) as { summary: AttestSummary; n: number }[];
+    for (const r of rows) if (r.summary in out) out[r.summary] = r.n;
+    return out;
   }
 
   /** The claim whose route is `route` (a job's release route), oldest first. */
