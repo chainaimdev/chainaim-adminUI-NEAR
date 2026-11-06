@@ -5,9 +5,12 @@
  * (2), a restart backfills from the stored cursor with no duplicates (3), no secret reaches the API (5).
  */
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
+import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { after, before, test } from "node:test";
 import { loadConfig } from "../src/config.ts";
 import { startApp, type App } from "../src/main.ts";
@@ -39,9 +42,9 @@ after(async () => {
 
 const env = { ADMIN_API_KEY: ADMIN, NEAR_WATCH_INGEST_KEY: INGEST, NEAR_USDC_CONTRACT_TESTNET: fx.contract, NEAR_CAIP2_TESTNET: "near:testnet", NEAR_PAY_TO_TESTNET: RECEIVER, NEARDATA_API_KEY: ND_KEY };
 
-async function start(store: string, extra: string[], watch = ["--watch", `buyer1=buyer=${SENDER}`]): Promise<App> {
+async function start(store: string, extra: string[], watch = ["--watch", `buyer1=buyer=${SENDER}`], envOver: Record<string, string> = {}): Promise<App> {
   const argv = ["--neardata-url", nd.url, "--rpc-fallback-url", rpc.url, "--port", "0", "--store", store, ...watch, "--poll-sec", "1", "--neardata-min-ms", "0", "--long-poll-ms", "1000", "--settle-grace-blocks", "5", ...extra];
-  return startApp(loadConfig(argv, env), { log: process.env.NW_TEST_LOG ? (l) => console.log("LOG", l) : () => {} });
+  return startApp(loadConfig(argv, { ...env, ...envOver }), { log: process.env.NW_TEST_LOG ? (l) => console.log("LOG", l) : () => {} });
 }
 
 async function until<T>(fn: () => T | undefined | false, ms = 8000): Promise<T> {
@@ -106,6 +109,69 @@ test("two roads: first wins, the other is recorded with its lag; a claim reconci
     assert.equal(seller.received.x402Count, 1);
   } finally {
     await app.stop();
+  }
+});
+
+test("false mismatch (live 2026-11-06): read with a wrong pay-to, still a mismatch after the fix and a restart; POST /admin/reconcile/rejudge clears it", async () => {
+  const store = join(dir, "r.sqlite");
+  seed(store, { neardata: fx.inclusionHeight - 1, rpc: fx.inclusionHeight - 1 });
+  const claimBody = JSON.stringify({ ts: new Date().toISOString(), event: "payment_settled", route: "POST /v1/jobs/09ebdf3d9b6d968ae76de3b1f4c18835/release", amount: AMOUNT, asset: fx.contract, network: "near:testnet", payer: SENDER, transaction: fx.tx, invoiceId: INV });
+  const wrong = await start(store, ["--feeds", "neardata,rpc", "--backfill", "off"], ["--watch", `buyer1=buyer=${SENDER}`], { NEAR_PAY_TO_TESTNET: "chainaim-old-payto.testnet" });
+  try {
+    const tx = await until(() => wrong.store.getTx("testnet", fx.tx));
+    assert.equal(tx.row.isX402, false, "the transfer went to a pay-to near-watch did not watch then");
+    const res = await fetch(`http://127.0.0.1:${wrong.port}/ingest/claim`, { method: "POST", headers: { "content-type": "application/json", "x-ingest-key": INGEST }, body: claimBody });
+    assert.equal(res.status, 202);
+    assert.equal(wrong.store.getRecon("testnet", fx.tx)?.state, "mismatch");
+  } finally {
+    await wrong.stop();
+  }
+  const fixed = await start(store, ["--feeds", "neardata,rpc", "--backfill", "off"]);
+  try {
+    assert.equal(fixed.store.getRecon("testnet", fx.tx)?.state, "mismatch", "fixing the pay-to does not bless the stored row");
+    const post = (headers: Record<string, string>, body: unknown) => fetch(`http://127.0.0.1:${fixed.port}/admin/reconcile/rejudge`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+    const ask = { hash: fx.tx, receiver: RECEIVER, reason: "receiver checked on nearblocks" };
+    assert.equal((await post({}, ask)).status, 401, "admin key required");
+    assert.equal((await post({ "x-ingest-key": INGEST }, ask)).status, 401, "the ingest key cannot re-judge");
+    assert.equal((await post({ authorization: `Bearer ${INGEST}` }, ask)).status, 401);
+    const wrongReceiver = await post({ "x-admin-key": ADMIN }, { ...ask, receiver: SENDER });
+    assert.equal(wrongReceiver.status, 409);
+    assert.equal(fixed.store.getRecon("testnet", fx.tx)?.state, "mismatch");
+    // The operator's command (src/rejudge.ts), as run inside the container: key from env, never printed.
+    const cli = (args: string[], keyEnv: Record<string, string>) => {
+      const childEnv: NodeJS.ProcessEnv = { ...process.env };
+      delete childEnv.ADMIN_API_KEY;
+      Object.assign(childEnv, keyEnv);
+      return promisify(execFile)(process.execPath, [fileURLToPath(new URL("../src/rejudge.ts", import.meta.url)), "--url", `http://127.0.0.1:${fixed.port}`, ...args], { env: childEnv }).then(
+        (r) => ({ code: 0, stdout: String(r.stdout), out: String(r.stdout) + String(r.stderr) }),
+        (e: { code: number; stdout: string; stderr: string }) => ({ code: e.code, stdout: String(e.stdout), out: String(e.stdout) + String(e.stderr) }),
+      );
+    };
+    const noKey = await cli(["--hash", fx.tx, "--receiver", RECEIVER, "--reason", ask.reason], {});
+    assert.equal(noKey.code, 2);
+    assert.match(noKey.out, /env ADMIN_API_KEY is not set/);
+    const usage = await cli(["--hash", fx.tx, "--all-mismatches", "--receiver", RECEIVER, "--reason", ask.reason], { ADMIN_API_KEY: ADMIN });
+    assert.equal(usage.code, 2, "--hash and --all-mismatches together are refused");
+    // desk.ps1 -RejudgeReceiver runs --all-mismatches: every mismatch row, each checked on its own.
+    const run = await cli(["--all-mismatches", "--receiver", RECEIVER, "--reason", ask.reason], { ADMIN_API_KEY: ADMIN });
+    assert.equal(run.code, 0, run.out);
+    assert.ok(!run.out.includes(ADMIN), "the key is never printed");
+    assert.match(run.stdout, /^1 mismatch row\(s\) on testnet$/m);
+    const m = new RegExp(`^${fx.tx}: HTTP 200 (\\{.*\\})$`, "m").exec(run.stdout);
+    assert.ok(m, run.out);
+    const body = JSON.parse(m[1]) as { ok: boolean; state: string; detail: string };
+    assert.deepEqual([body.ok, body.state], [true, "matched"]);
+    assert.match(body.detail, /^re-judged .* by operator: was mismatch \(the chain transfer is not a valid x402 NEAR USDC payment .*\); reason: receiver checked on nearblocks$/);
+    const recon = (await (await get(fixed, "/api/reconcile")).json()) as { counts: { testnet: Record<string, number> } | Record<string, number> };
+    const text = JSON.stringify(recon);
+    assert.ok(!text.includes(ADMIN) && !text.includes(INGEST), "no key in the answer");
+    assert.equal(fixed.store.reconCounts("testnet").mismatch, 0);
+    assert.equal(fixed.store.reconCounts("testnet").matched, 1);
+    const none = await cli(["--all-mismatches", "--receiver", RECEIVER, "--reason", ask.reason], { ADMIN_API_KEY: ADMIN });
+    assert.equal(none.code, 0, "nothing left to re-judge is not an error");
+    assert.match(none.stdout, /^0 mismatch row\(s\) on testnet$/m);
+  } finally {
+    await fixed.stop();
   }
 });
 

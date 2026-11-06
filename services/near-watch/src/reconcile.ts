@@ -19,14 +19,30 @@
  * Grace is counted in final blocks the watcher has seen. Chain transfers from before reconciling began on a network
  * (meta reconcile_from_block:<network>, set at the first final block seen) are not reconciled: backfilled history
  * was never covered by claims.
+ *
+ * Operator re-judge (rejudge(), POST /admin/reconcile/rejudge, src/rejudge.ts): a transfer's x402 verdict is fixed when
+ * it is read, against the pay-to near-watch had THEN. When that pay-to was wrong (seen 2026-11-06: the paywall paid
+ * chainaim-payto-seller.testnet while near-watch watched another pay-to), the row is a false mismatch for good. An
+ * operator who checked the transfer names the receiver and a reason; the row turns matched only if the stored transfer
+ * went to exactly that account, that account is a watched pay-to now, the transfer is otherwise an x402 payment
+ * (success, ft_transfer, one event) and amount, payer and token agree with the claim. Never automatic: a later config
+ * change must not bless old payments. The detail keeps what it was and why ("re-judged <time> by operator: ...").
  */
 import { compareUnits } from "../../../packages/chain-core/src/money.ts";
+import { isAccountId, isNearHash } from "../../../packages/chain-core/src/near.ts";
 import type { Row } from "./decode.ts";
 import type { Bus, LedgerEvent } from "./events.ts";
 import type { ClaimRow, ReconSide, ReconState, Store, StoredTx } from "./store.ts";
 
 export type ReconcileOptions = { networks: readonly string[]; payTo: ReadonlyMap<string, ReadonlySet<string>>; graceBlocks: number; batch: number; now?: () => number };
 export type Decision = { state: ReconState; side: ReconSide; detail: string | null; invoiceId: string | null };
+
+/** How a re-judged row's detail starts; such a row keeps its state on later passes. */
+export const REJUDGED = "re-judged ";
+/** Longest operator reason kept. */
+export const REJUDGE_REASON_MAX = 200;
+export type RejudgeInput = { network: string; hash: string; receiver: string; reason: string };
+export type RejudgeResult = { ok: true; state: "matched"; detail: string } | { ok: false; status: 400 | 404 | 409; error: string };
 
 const FINAL_ALERT: Partial<Record<ReconState, { level: "warn" | "error"; code: string }>> = {
   only_in_log: { level: "warn", code: "reconcile_only_in_log" },
@@ -105,15 +121,61 @@ export class Reconciler {
 
   differences(claim: ClaimRow, row: Row): string[] {
     const out: string[] = [];
-    if (!row.isX402) out.push(`the chain transfer is not a valid x402 NEAR USDC payment (status ${row.status}, method ${row.method ?? "?"}, ${row.events} transfer event(s))`);
+    // When status, method and events are all right, what failed is the pay-to at read time: name the receiver.
+    const into = Reconciler.x402Shape(row).length === 0 ? `; into ${row.to}, which was not a watched pay-to when near-watch read the transfer` : "";
+    if (!row.isX402) out.push(`the chain transfer is not a valid x402 NEAR USDC payment (status ${row.status}, method ${row.method ?? "?"}, ${row.events} transfer event(s)${into})`);
     else if (!this.isOurs(row)) out.push(`paid to ${row.to}, not a watched pay-to account`);
+    out.push(...Reconciler.fieldDiffs(claim, row));
+    return out;
+  }
+
+  /** What makes a row not an x402 transfer, the pay-to aside: [] when it is a successful ft_transfer with one event. */
+  static x402Shape(row: Row): string[] {
+    const out: string[] = [];
+    if (row.status !== "success") out.push(`status ${row.status}`);
+    if (row.method !== "ft_transfer") out.push(`method ${row.method ?? "?"}`);
+    if (row.events !== 1) out.push(`${row.events} transfer event(s)`);
+    return out;
+  }
+
+  /** Amount, payer and token: claim against chain. */
+  static fieldDiffs(claim: ClaimRow, row: Row): string[] {
+    const out: string[] = [];
     if (compareUnits(row.amount, claim.amount) !== 0) out.push(`chain moved ${row.amount} base units, the log says ${claim.amount}`);
     if (claim.payer !== null && claim.payer !== row.from) out.push(`chain payer ${row.from}, the log says ${claim.payer}`);
     if (claim.asset !== null && claim.asset !== row.contract) out.push(`token ${row.contract}, the log says ${claim.asset}`);
     return out;
   }
 
+  /** Operator re-judge of one mismatch (see the header). Changes nothing unless every check passes. */
+  rejudge(input: RejudgeInput): RejudgeResult {
+    const { network, hash, receiver } = input;
+    const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+    if (!this.opts.networks.includes(network)) return { ok: false, status: 400, error: `network ${network} is not watched` };
+    if (!isNearHash(hash)) return { ok: false, status: 400, error: "hash must be a base58 NEAR transaction hash" };
+    if (!isAccountId(receiver)) return { ok: false, status: 400, error: "receiver must be a NEAR account id" };
+    if (reason === "" || reason.length > REJUDGE_REASON_MAX || /[\x00-\x1f\x7f]/.test(reason)) return { ok: false, status: 400, error: `reason must be 1-${REJUDGE_REASON_MAX} characters on one line` };
+    const prev = this.store.getRecon(network, hash);
+    if (!prev) return { ok: false, status: 404, error: `no reconcile row for ${hash}` };
+    if (prev.state !== "mismatch") return { ok: false, status: 409, error: `the row is ${prev.state}; only a mismatch can be re-judged` };
+    const claim = this.store.getClaim(network, hash);
+    const tx = this.store.getTx(network, hash);
+    if (!claim || !tx) return { ok: false, status: 409, error: "the claim or the chain transfer is not stored" };
+    const row = tx.row;
+    if (!(this.opts.payTo.get(network)?.has(receiver) ?? false)) return { ok: false, status: 409, error: `${receiver} is not a watched pay-to now` };
+    if (row.to !== receiver) return { ok: false, status: 409, error: `the stored transfer went to ${row.to}, not ${receiver}` };
+    const still = [...Reconciler.x402Shape(row), ...Reconciler.fieldDiffs(claim, row)];
+    if (still.length) return { ok: false, status: 409, error: `still disagrees: ${still.join("; ")}` };
+    const detail = `${REJUDGED}${new Date(this.now()).toISOString()} by operator: was mismatch (${prev.detail ?? "no detail"}); reason: ${reason}`;
+    this.apply(network, hash, { state: "matched", side: prev.side, detail, invoiceId: prev.invoiceId });
+    this.bus.alert("info", "reconcile_rejudged", `${hash}${prev.invoiceId ? ` (invoice ${prev.invoiceId})` : ""}: matched by operator: ${reason}`, network);
+    return { ok: true, state: "matched", detail };
+  }
+
   decideClaim(claim: ClaimRow, tip: number | null): Decision {
+    const kept = this.store.getRecon(claim.network, claim.hash);
+    // An operator's re-judge stands: later passes or a repeated claim never turn it back with the read-time verdict.
+    if (kept && kept.state === "matched" && kept.detail?.startsWith(REJUDGED)) return { state: kept.state, side: kept.side, detail: kept.detail, invoiceId: kept.invoiceId };
     const tx = this.store.getTx(claim.network, claim.hash);
     if (tx) {
       const diff = this.differences(claim, tx.row);

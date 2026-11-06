@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { IngestError, parseClaim } from "../src/claims.ts";
 import { decodeOutcome, neardataBlock } from "../src/decode.ts";
 import { Bus } from "../src/events.ts";
-import { graceReport, Reconciler } from "../src/reconcile.ts";
+import { graceReport, Reconciler, REJUDGED } from "../src/reconcile.ts";
 import { Store, type ClaimRow } from "../src/store.ts";
 import { AMOUNT, ctx, fixture as fx, LATE_LIVE, lateFixture, RECEIVER, SENDER } from "./fixtures.ts";
 
@@ -110,6 +110,109 @@ test("x402 transfer with no claim: only_on_ledger after the grace", () => {
   tip(fx.receiptHeight + 4);
   rec.run();
   assert.equal(store.getRecon("testnet", r.hash)?.state, "only_on_ledger");
+});
+
+// ---- false mismatch from a wrong pay-to at read time (live 2026-11-06, jobs 09ebdf3d… and bef914c0…) ----
+
+/** The real x402 payment read while near-watch's pay-to was another account: kept (the buyer is watched), not x402. */
+const readWithWrongPayTo = () => neardataBlock(fx.neardata[String(fx.receiptHeight)], fx.contract).outcomes.flatMap((o) => decodeOutcome(o, ctx({ payTo: new Set(["chainaim-old-payto.testnet"]) })))[0];
+const REASON = "receiver checked on nearblocks: chainaim-payto-seller.testnet; near-watch pay-to was misconfigured";
+
+function falseMismatch() {
+  const s = setup();
+  const alerts: { code: string; message: string }[] = [];
+  s.bus.on((name, data) => {
+    if (name === "alert") alerts.push(data as { code: string; message: string });
+  });
+  s.tip(fx.receiptHeight);
+  const row = readWithWrongPayTo();
+  s.store.recordArrival(row, "rpc", Date.now());
+  const c = s.claim();
+  s.store.insertClaim(c);
+  s.rec.onClaim(c);
+  return { ...s, row, c, alerts };
+}
+
+test("wrong pay-to at read time: mismatch, and the detail names the receiver (status, method and events were right)", () => {
+  const { store, row } = falseMismatch();
+  assert.equal(row.isX402, false);
+  assert.equal(row.to, RECEIVER);
+  const r = store.getRecon("testnet", fx.tx);
+  assert.equal(r?.state, "mismatch");
+  assert.equal(r?.detail, `the chain transfer is not a valid x402 NEAR USDC payment (status success, method ft_transfer, 1 transfer event(s); into ${RECEIVER}, which was not a watched pay-to when near-watch read the transfer)`);
+});
+
+test("the read-time verdict is final: later passes and a repeated claim leave the false mismatch alone", () => {
+  const { store, rec, tip, c } = falseMismatch();
+  tip(fx.receiptHeight + 100);
+  rec.run();
+  rec.onClaim(c);
+  assert.equal(store.getRecon("testnet", fx.tx)?.state, "mismatch", "a config fix alone never blesses old payments");
+});
+
+test("rejudge: refused, changing nothing, unless the receiver, the current pay-to and the claim all agree", () => {
+  const { store, rec } = falseMismatch();
+  const before = store.getRecon("testnet", fx.tx);
+  const ask = (over: Partial<{ network: string; hash: string; receiver: string; reason: string }> = {}) => rec.rejudge({ network: "testnet", hash: fx.tx, receiver: RECEIVER, reason: REASON, ...over });
+  const refused = (over: Parameters<typeof ask>[0], status: number, re: RegExp) => {
+    const r = ask(over);
+    assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.equal(r.status, status);
+      assert.match(r.error, re);
+    }
+  };
+  refused({ receiver: SENDER }, 409, /is not a watched pay-to now/);
+  refused({ reason: "   " }, 400, /reason must be/);
+  refused({ reason: "two\nlines" }, 400, /reason must be/);
+  refused({ reason: "x".repeat(201) }, 400, /reason must be/);
+  refused({ hash: "9".repeat(44) }, 404, /no reconcile row/);
+  refused({ hash: "not-a-hash" }, 400, /base58/);
+  refused({ network: "mainnet" }, 400, /not watched/);
+  // A pay-to that is watched now but is not where the transfer went.
+  const other = new Reconciler(store, new Bus(), { networks: ["testnet"], payTo: new Map([["testnet", new Set([RECEIVER, "chainaim-other-payto.testnet"])]]), graceBlocks: 3, batch: 100 });
+  const r = other.rejudge({ network: "testnet", hash: fx.tx, receiver: "chainaim-other-payto.testnet", reason: REASON });
+  assert.ok(!r.ok && r.status === 409 && /went to chainaim-payto-seller\.testnet, not chainaim-other-payto\.testnet/.test(r.error));
+  assert.deepEqual(store.getRecon("testnet", fx.tx), before, "nothing changed");
+});
+
+test("rejudge: a real disagreement (amount) stays a mismatch", () => {
+  const { store, rec, tip, claim } = setup();
+  tip(fx.receiptHeight);
+  store.recordArrival(readWithWrongPayTo(), "rpc", Date.now());
+  const c = claim({ amount: "4500000" });
+  store.insertClaim(c);
+  rec.onClaim(c);
+  const r = rec.rejudge({ network: "testnet", hash: fx.tx, receiver: RECEIVER, reason: REASON });
+  assert.ok(!r.ok && r.status === 409 && /still disagrees: chain moved 10000 base units, the log says 4500000/.test(r.error));
+  assert.equal(store.getRecon("testnet", fx.tx)?.state, "mismatch");
+});
+
+test("rejudge: the false mismatch becomes matched, keeps what it was and why, alerts once, and stays matched", () => {
+  const { store, rec, tip, c, alerts, bus } = falseMismatch();
+  const was = store.getRecon("testnet", fx.tx)?.detail;
+  const events: { state: string; previous: string | null }[] = [];
+  bus.on((name, data) => {
+    if (name === "reconcile") events.push(data as { state: string; previous: string | null });
+  });
+  const r = rec.rejudge({ network: "testnet", hash: fx.tx, receiver: RECEIVER, reason: `  ${REASON}  ` });
+  assert.equal(r.ok, true);
+  const row = store.getRecon("testnet", fx.tx);
+  assert.equal(row?.state, "matched");
+  assert.equal(row?.invoiceId, INV);
+  assert.ok(row?.detail?.startsWith(REJUDGED));
+  assert.match(row?.detail ?? "", /^re-judged \d{4}-\d\d-\d\dT[\d:.]+Z by operator: was mismatch \(/);
+  assert.ok(row?.detail?.includes(`(${was}); reason: ${REASON}`), "the old detail and the trimmed reason are kept");
+  assert.deepEqual(events.map((e) => [e.state, e.previous]), [["matched", "mismatch"]], "one reconcile event (the Jobs tab follows it)");
+  assert.equal(alerts.filter((a) => a.code === "reconcile_rejudged").length, 1);
+  assert.deepEqual([store.reconCounts("testnet").matched, store.reconCounts("testnet").mismatch], [1, 0]);
+  // Later passes, a repeated claim and a second re-judge do not undo or repeat it.
+  tip(fx.receiptHeight + 100);
+  rec.run();
+  rec.onClaim(c);
+  assert.equal(store.getRecon("testnet", fx.tx)?.detail, row?.detail);
+  const again = rec.rejudge({ network: "testnet", hash: fx.tx, receiver: RECEIVER, reason: REASON });
+  assert.ok(!again.ok && again.status === 409 && /the row is matched/.test(again.error));
 });
 
 // ---- late arrival: the real BFEX1KAH… payment, with the times the live store recorded ----

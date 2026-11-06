@@ -24,6 +24,9 @@
  *   The snapshot carries `jobs` only once a job exists.
  *   NEAR AI model attestation (PLAN-adminui-nearai-attestation.md ARCH-501..503): job_attested comes in on /ingest/job too;
  *   a job's view carries `attestation` and the summary `attestation` counts only once one is stored.
+ * Operator (src/reconcile.ts rejudge; src/rejudge.ts runs it from inside the container):
+ *   POST /admin/reconcile/rejudge       {network, hash, receiver, reason}: one false mismatch -> matched, with the reason
+ *                                       kept in the detail; 200, or 400/404/409 with why nothing changed. Admin key only.
  * Seller Wallet (when started with it): GET /api/seller (src/seller.ts) and `seller` in the snapshot.
  * Every /api and /stream call needs the admin key, sent as
  * `x-admin-key: <key>` or `authorization: Bearer <key>`; the console's server
@@ -152,7 +155,8 @@ export class WatchServer {
     this.server = createServer((req, res) => {
       try {
         if (req.method === "POST") {
-          this.ingest(req, res).catch((e: unknown) => fail(res, e));
+          const p = new URL(req.url ?? "/", "http://near-watch.local").pathname;
+          (p === "/admin/reconcile/rejudge" ? this.rejudge(req, res) : this.ingest(req, res)).catch((e: unknown) => fail(res, e));
           return;
         }
         this.route(req, res);
@@ -200,6 +204,39 @@ export class WatchServer {
     const accepted = results.filter((r) => r.ok && r.isNew).length;
     const repeats = results.filter((r) => r.ok && !r.isNew).length;
     return json(res, refused.length === items.length ? 400 : 202, { accepted, repeats, refused });
+  }
+
+  /** POST /admin/reconcile/rejudge: the admin key (never the ingest key), JSON {network, hash, receiver, reason}. */
+  private async rejudge(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.ops) {
+      req.resume();
+      return json(res, 404, { error: "not found" });
+    }
+    if (!keyMatches(this.opts.adminKey, req)) {
+      req.resume();
+      return json(res, 401, { error: "admin key required" });
+    }
+    if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) {
+      req.resume();
+      return json(res, 415, { error: "content-type must be application/json" });
+    }
+    let text: string;
+    try {
+      text = await readBody(req, 4096);
+    } catch (e) {
+      if (e instanceof HttpError) return json(res, e.status, { error: e.message });
+      throw e;
+    }
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      return json(res, 400, { error: "body is not JSON" });
+    }
+    const b = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
+    const str = (v: unknown): string => (typeof v === "string" ? v : "");
+    const r = this.ops.reconciler.rejudge({ network: str(b.network) || this.opts.networks[0], hash: str(b.hash), receiver: str(b.receiver), reason: str(b.reason) });
+    return r.ok ? json(res, 200, { ok: true, state: r.state, detail: r.detail }) : json(res, r.status, { ok: false, error: r.error });
   }
 
   snapshot(): Record<string, unknown> {
