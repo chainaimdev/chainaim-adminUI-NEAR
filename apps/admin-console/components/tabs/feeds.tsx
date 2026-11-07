@@ -188,11 +188,21 @@ export function FeedsTab({ live, feeds, error, now }: { live: LiveState; feeds: 
           ))}
         </div>
       )}
-      <div className="inset">
+      <div className="inset read-me">
         <strong>Rules</strong>
-        Roads are chosen when near-watch starts (<code>--feeds neardata,qn-rpc,rpc</code>, <code>--backfill on</code>); this page shows them and never changes them. Every road
-        walks final block heights in order; the first road to deliver a transfer wins and later roads are recorded with their delay, never counted twice. Hosts are shown
-        redacted (QuickNode URLs carry a token); the browser never sees an endpoint URL.
+        <ul>
+          <li>
+            <b>Chosen at start-up:</b> roads are set when near-watch starts (<code>--feeds neardata,qn-rpc,rpc</code>, <code>--backfill on</code>). This page shows
+            them and never changes them.
+          </li>
+          <li>
+            <b>One count per transfer:</b> every road walks final block heights in order. The first road to deliver a transfer wins; later roads are recorded with
+            their delay and never counted twice.
+          </li>
+          <li>
+            <b>Hosts redacted:</b> QuickNode URLs carry a token, so hosts are shown redacted and the browser never sees an endpoint URL.
+          </li>
+        </ul>
       </div>
     </section>
   );

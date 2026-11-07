@@ -81,7 +81,9 @@ h2.q { font: 500 30px Newsreader, Georgia, serif; margin: 4px 0 0; letter-spacin
 .tw { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
 th { text-align: left; padding: 9px 10px; font: 600 10px "IBM Plex Mono", monospace; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line); }
-td { padding: 9px 10px; font: 11px "IBM Plex Mono", monospace; border-bottom: 1px solid var(--line2); white-space: nowrap; }
+td { padding: 9px 10px; font: 11px "IBM Plex Mono", monospace; border-bottom: 1px solid var(--line2); white-space: normal; overflow-wrap: anywhere; }
+/* numbers stay on one line so an amount never splits; text cells wrap (owner 2026-11-06: no long horizontal scrolls) */
+td.r { white-space: nowrap; }
 td.r, th.r { text-align: right; }
 
 /* alerts + insets */
@@ -95,9 +97,14 @@ td.r, th.r { text-align: right; }
 .read-me ul { margin: 2px 0 8px; padding-left: 16px; }
 .read-me li { margin: 2px 0; }
 .read-me b { color: var(--text); font-weight: 600; }
-.read-me table { border-collapse: collapse; margin-top: 2px; }
-.read-me th, .read-me td { text-align: left; padding: 2px 14px 2px 0; border-bottom: 1px solid var(--line); }
+.read-me table { border-collapse: collapse; margin-top: 2px; width: 100%; table-layout: fixed; }
+.read-me th, .read-me td { text-align: left; padding: 3px 14px 3px 0; border-bottom: 1px solid var(--line); white-space: normal; overflow-wrap: anywhere; font: inherit; text-transform: none; letter-spacing: 0; }
+.read-me th:first-child, .read-me td:first-child { width: 30%; }
+.read-me code { overflow-wrap: anywhere; }
 .read-me th { color: var(--text); font-weight: 600; }
+.read-me p { margin: 2px 0 6px; }
+.read-me td { vertical-align: top; }
+.read-me .src { margin: 8px 0 0; color: var(--text2); font-size: 10px; opacity: 0.8; }
 .empty { padding: 18px 4px; font: 11px "IBM Plex Mono", monospace; color: var(--muted); }
 .empty.bad { color: var(--bad); }
 
@@ -181,7 +188,7 @@ canvas.spark { width: 100%; height: 26px; display: block; margin-top: 8px; }
 .via i { width: 6px; height: 6px; border-radius: 50%; background: var(--text2); }
 .rail p { margin: 0; padding: 6px 2px; border-bottom: 1px solid var(--line2); font: 10.5px "IBM Plex Mono", monospace; color: var(--text2); overflow-wrap: anywhere; }
 .rail p.w { color: var(--warn); } .rail p.e { color: var(--bad); }
-table.wide { min-width: 900px; }
+table.wide { min-width: 0; }
 tr.gap td:first-child { box-shadow: inset 4px 0 0 var(--bad); }
 tr.unacc td:first-child { box-shadow: inset 4px 0 0 var(--warn); }
 tr.off td { color: var(--muted); }

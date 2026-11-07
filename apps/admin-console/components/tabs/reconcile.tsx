@@ -155,12 +155,25 @@ export function ReconcileTab({ live, decimalsOf, grace }: { live: LiveState; dec
           </tbody>
         </table>
       </div>
-      <div className="inset" title="near-watch src/reconcile.ts: rows join by transaction hash; amount, payer and token are compared in base units; transfers from before reconciling started are not judged.">
+      <div className="inset read-me" title="near-watch src/reconcile.ts: rows join by transaction hash; amount, payer and token are compared in base units; transfers from before reconciling started are not judged.">
         <strong>How to read this</strong>
-        Each row is one payment, seen twice: what the paywall says it was paid (<i>reported</i>) and the USDC transfer on the chain (<i>measured</i>).{" "}
-        <i>matched</i>: both agree. <i>pending</i>: waiting for the other side. <i>only in log</i>: the paywall says paid, no transfer found.{" "}
-        <i>only on ledger</i>: a transfer with no paywall record. <i>mismatch</i>: both found, but they disagree. <i>late</i>: matched after a delay.{" "}
-        <i>re-judged by operator</i>: a false mismatch an operator cleared; hover for why.
+        <p>
+          Each row is one payment, seen twice: what the paywall says it was paid (<i>reported</i>) and the USDC transfer on the chain (<i>measured</i>).
+        </p>
+        <table>
+          <thead>
+            <tr><th>State</th><th>Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>matched</td><td>Both agree.</td></tr>
+            <tr><td>pending</td><td>Waiting for the other side.</td></tr>
+            <tr><td>only in log</td><td>The paywall says paid; no transfer found.</td></tr>
+            <tr><td>only on ledger</td><td>A transfer with no paywall record.</td></tr>
+            <tr><td>mismatch</td><td>Both found, but they disagree.</td></tr>
+            <tr><td>late</td><td>Matched after a delay.</td></tr>
+            <tr><td>re-judged by operator</td><td>A false mismatch an operator cleared; hover the row for why.</td></tr>
+          </tbody>
+        </table>
       </div>
       <div className="inset" title={Object.values(grace).map((g) => g?.tradeoff ?? "").join(" ")}>
         <strong>Wait before flagging a gap</strong>

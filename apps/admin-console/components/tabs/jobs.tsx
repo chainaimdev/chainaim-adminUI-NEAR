@@ -355,13 +355,47 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
           <Breakdown j={sel} decimalsOf={decimalsOf} />
         </>
       )}
-      <div className="inset">
-        <strong>Where this comes from (near-watch src/jobs.ts)</strong>
-        Steps, models, tokens, masking counts and the breakdown are the test console&apos;s <code>job_quoted</code> event (kinds and counts only: near-watch refuses an event
-        that carries any text). Paid = the paywall&apos;s claim for <code>POST /v1/jobs/&lt;jobId&gt;/release</code>; reconcile is that claim against the chain transfer, as on
-        the Reconcile tab. Released = the console confirmed the paywall took the result; expired = the quote passed its expiry unpaid. Lost compute = model cost + call fees +
-        analyst fee of expired jobs. Attested = the console&apos;s <code>job_attested</code> event: private-ai&apos;s ca-attest checked each NEAR AI call&apos;s TEE report, reply
-        signature and hashes; near-watch and this page only show its result.
+      <div className="inset read-me">
+        <strong>Where this comes from</strong>
+        <table>
+          <thead>
+            <tr><th>Shown</th><th>Comes from</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Steps, models, tokens, masking counts, breakdown</td>
+              <td>The test console&apos;s <code>job_quoted</code> event: kinds and counts only (near-watch refuses an event that carries any text).</td>
+            </tr>
+            <tr>
+              <td>Paid</td>
+              <td>The paywall&apos;s claim for <code>POST /v1/jobs/&lt;jobId&gt;/release</code>.</td>
+            </tr>
+            <tr>
+              <td>Reconcile</td>
+              <td>That claim against the chain transfer, as on the Reconcile tab.</td>
+            </tr>
+            <tr>
+              <td>Released</td>
+              <td>The console confirmed the paywall took the result.</td>
+            </tr>
+            <tr>
+              <td>Expired</td>
+              <td>The quote passed its expiry unpaid.</td>
+            </tr>
+            <tr>
+              <td>Lost compute</td>
+              <td>Model cost + call fees + analyst fee of expired jobs.</td>
+            </tr>
+            <tr>
+              <td>Attested</td>
+              <td>
+                The console&apos;s <code>job_attested</code> event: private-ai&apos;s ca-attest checked each NEAR AI call&apos;s TEE report, reply signature and hashes.
+                near-watch and this page only show its result.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p className="src">Source: near-watch src/jobs.ts</p>
       </div>
     </section>
   );

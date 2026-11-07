@@ -331,11 +331,25 @@ export function SellerWalletTab({ live, now, wallets, books, x402Net }: { live: 
           </div>
         ))
       )}
-      <div className="inset">
-        <strong>Counting rule (near-watch src/seller.ts, DESIGN §5.1)</strong>
-        Counted = a successful NEP-141 transfer of the watched token into the pay-to, from a watched buyer, in a final block. x402 = <code>ft_transfer</code> with exactly one
-        transfer event (no memo needed: the x402 NEAR scheme sends none); anything else from a buyer is manual. Transfers from other accounts are listed here and never counted. In
-        flight = paywall claims with no transfer yet plus rig calls signed or sent (estimated at <code>--call-price</code> when <code>--inflight-estimate</code> is on).
+      <div className="inset read-me">
+        <strong>Counting rule</strong>
+        <ul>
+          <li>
+            <b>Counted:</b> a successful NEP-141 transfer of the watched token into the pay-to, from a watched buyer, in a final block.
+          </li>
+          <li>
+            <b>x402:</b> <code>ft_transfer</code> with exactly one transfer event (no memo needed: the x402 NEAR scheme sends none). Anything else from a buyer is
+            <i> manual</i>.
+          </li>
+          <li>
+            <b>Other accounts:</b> their transfers are listed here and never counted.
+          </li>
+          <li>
+            <b>In flight:</b> paywall claims with no transfer yet, plus rig calls signed or sent (estimated at <code>--call-price</code> when{" "}
+            <code>--inflight-estimate</code> is on).
+          </li>
+        </ul>
+        <p className="src">Source: near-watch src/seller.ts, DESIGN §5.1</p>
       </div>
     </section>
   );
