@@ -230,6 +230,11 @@ export type AttestedCall = {
   /** null = not checked */
   reportFetchedMs: number | null; tdx: boolean | null; gpu: boolean | null; signature: boolean | null; hashes: boolean | null;
   status: "verified" | "unverified" | "unavailable" | "not_applicable"; reason: string | null;
+  /**
+   * Fix 4: the text NEAR AI signed ("<servedModel>:<sha256 request>:<sha256 response>", a model id and two hashes)
+   * and the signature in hex, so anyone can re-check it. Absent from an older near-watch; null when not sent.
+   */
+  signedText?: string | null; signatureHex?: string | null;
 };
 export type JobAttestation = { tsMs: number; summary: AttestSummary; calls: AttestedCall[]; receivedMs: number };
 /** attestation: known jobs per attestation summary, present only once near-watch stored any job_attested. */

@@ -120,6 +120,16 @@ describe("NEAR AI attestation on near-watch", () => {
       ["reportFetchedAt", c({ reportFetchedAt: "earlier" }), "calls[0].reportFetchedAt"],
       ["reason with a newline", c({ reason: "line one\nline two" }), "calls[0].reason"],
       ["reason over 200", c({ reason: "r".repeat(201) }), "calls[0].reason"],
+      // fix 4: signature evidence is bounded hex / a model id + two hashes, never text
+      ["signedText that is text", c({ signedText: "the revenue was 42" }), "calls[0].signedText"],
+      ["signedText with uppercase hash", c({ signedText: `m:${"A".repeat(64)}:${"b".repeat(64)}` }), "calls[0].signedText"],
+      ["signedText with one hash", c({ signedText: `m:${"a".repeat(64)}` }), "calls[0].signedText"],
+      ["signedText with a space", c({ signedText: `my model:${"a".repeat(64)}:${"b".repeat(64)}` }), "calls[0].signedText"],
+      ["signedText as number", c({ signedText: 42 }), "calls[0].signedText"],
+      ["ecdsa signature too short", c({ signatureHex: "0x" + "ab".repeat(64) }), "calls[0].signatureHex"],
+      ["ecdsa signature not hex", c({ signatureHex: "0x" + "zz".repeat(65) }), "calls[0].signatureHex"],
+      ["ed25519 signature given for ecdsa", c({ signatureHex: "ab".repeat(64) }), "calls[0].signatureHex"],
+      ["signature without algo", c({ signingAlgo: null, signingAddress: null, signatureHex: "0x" + "ab".repeat(65) }), "calls[0].signatureHex needs"],
       ["v", { ...a, v: 2 }, "v must be 1"],
       ["jobId", { ...a, jobId: "x" }, "jobId"],
       ["network", { ...a, network: "near:mainnet" }, "network"],
@@ -148,7 +158,7 @@ describe("NEAR AI attestation on near-watch", () => {
     assert.deepEqual(one.job.attestation.calls[0], {
       step: "query", model: "nearai/deepseek-v4.1-flash", servedModel: "deepseek-ai/DeepSeek-V4.1-Flash-1017", providerId: "chatcmpl-query0123456789abcdef",
       signatureKind: "provider_tee", signingAlgo: "ecdsa", signingAddress: "0x" + "ab12".repeat(10), reportFetchedMs: Date.parse("2026-11-06T09:59:00.000Z"),
-      tdx: true, gpu: true, signature: true, hashes: true, status: "verified", reason: null,
+      tdx: true, gpu: true, signature: true, hashes: true, status: "verified", reason: null, signedText: null, signatureHex: null,
     });
     const list = (await (await get(app, "/api/jobs")).json()) as Record<string, any>;
     assert.deepEqual(list.attestation, { attested: 1, partial: 0, unverified: 0, unavailable: 0, not_applicable: 0 });
@@ -169,6 +179,26 @@ describe("NEAR AI attestation on near-watch", () => {
     const a = app.store.getAttestation(id)!;
     assert.equal(a.summary, "partial");
     assert.deepEqual([a.calls[0].signingAlgo, a.calls[0].gpu, a.calls[1].status, a.calls[1].reason, a.calls[1].tdx], ["ed25519", null, "unavailable", "signature not found after 30 s", null]);
+  });
+
+  test("fix 4: signature evidence (signed text + signature hex) is stored and shown as sent", async () => {
+    const id = ID(6);
+    await post(app, "/ingest/job", quoted(id));
+    const signedText = `deepseek-ai/DeepSeek-V4.1-Flash-1017:${"1a".repeat(32)}:${"2b".repeat(32)}`;
+    const ecdsaSig = "0x" + "cd".repeat(64) + "1b";
+    const edSig = "ef".repeat(64);
+    const body = attested(id, {
+      calls: [
+        call("query", { signedText, signatureHex: ecdsaSig }),
+        call("answer", { signingAlgo: "ed25519", signingAddress: "cd".repeat(32), signedText: `${"3c".repeat(32)}:${"4d".repeat(32)}`, signatureHex: edSig }),
+      ],
+    });
+    const r = await post(app, "/ingest/job", body);
+    assert.equal(r.status, 202, await r.text());
+    const one = (await (await get(app, `/api/job/${id}`)).json()) as Record<string, any>;
+    assert.deepEqual([one.job.attestation.calls[0].signedText, one.job.attestation.calls[0].signatureHex], [signedText, ecdsaSig]);
+    assert.deepEqual([one.job.attestation.calls[1].signedText, one.job.attestation.calls[1].signatureHex], [`${"3c".repeat(32)}:${"4d".repeat(32)}`, edSig]);
+    assert.deepEqual(await (await post(app, "/ingest/job", body)).json(), { accepted: 0, repeats: 1, refused: [] }, "the same evidence again is a repeat");
   });
 
   test("ARCH-502: a newer event replaces the stored one; an older one is a repeat", async () => {
@@ -230,7 +260,9 @@ describe("NEAR AI attestation on near-watch", () => {
     assert.deepEqual(await (await post(app, "/ingest/job", attested(ID(1)))).json(), { accepted: 0, repeats: 1, refused: [] }, "still a repeat after the restart");
     const snap = (await (await get(app, "/api/snapshot")).json()) as { jobs: Record<string, any> };
     assert.deepEqual(Object.keys(snap.jobs).sort(), ["attestation", "counts", "lostCompute", "recent"]);
-    assert.equal(snap.jobs.attestation.attested, 3);
+    assert.equal(snap.jobs.attestation.attested, 4);
+    const ev = (await (await get(app, `/api/job/${ID(6)}`)).json()) as Record<string, any>;
+    assert.equal(ev.job.attestation.calls[0].signatureHex, "0x" + "cd".repeat(64) + "1b", "evidence survives a restart");
     assert.equal(snap.jobs.attestation.unverified, 1);
   });
 });

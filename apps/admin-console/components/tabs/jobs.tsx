@@ -31,6 +31,45 @@ const ATTEST_CLASS: Record<AttestSummary, string> = { attested: "matched", parti
 const tick = (v: boolean | null): string => (v === null ? "not checked" : v ? "✓" : "✗");
 /** NEAR AI's own checker for one reply (docs.near.ai/cloud/verification). */
 const NEAR_AI_VERIFY = "https://cloud.near.ai/verify";
+const wrap = { wordBreak: "break-all" as const };
+
+/**
+ * Fix 4: the signature evidence of each call that has it: the exact text NEAR AI's TEE signed (a model id and the
+ * SHA-256 of the request and response bytes, never the text itself) and the signature, so anyone can recover the
+ * signer (EIP-191 for ecdsa) and compare it with the signer column above.
+ */
+function SignatureEvidence({ calls }: { calls: NonNullable<JobView["attestation"]>["calls"] }) {
+  const withSig = calls.map((c, i) => ({ c, i })).filter(({ c }) => c.signedText || c.signatureHex);
+  if (withSig.length === 0) return null;
+  return (
+    <details>
+      <summary>Signature evidence ({withSig.length} call(s)): signed text and signature, to re-check yourself</summary>
+      <table className="wide">
+        <thead>
+          <tr>
+            <th>step</th>
+            <th title="&lt;served model&gt;:&lt;sha256 of the request&gt;:&lt;sha256 of the response&gt;, as NEAR AI signed it">signed text</th>
+            <th>signature</th>
+          </tr>
+        </thead>
+        <tbody>
+          {withSig.map(({ c, i }) => (
+            <tr key={i}>
+              <td>{c.step}</td>
+              <td style={wrap}>
+                <code>{c.signedText ?? "—"}</code>
+              </td>
+              <td style={wrap}>
+                <code>{c.signatureHex ?? "—"}</code>
+                {c.signatureHex && c.signingAlgo && <span className="muted"> ({c.signingAlgo})</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </details>
+  );
+}
 
 function AttestationTable({ j }: { j: JobView }) {
   const a = j.attestation;
@@ -84,6 +123,7 @@ function AttestationTable({ j }: { j: JobView }) {
           )}
         </tbody>
       </table>
+      <SignatureEvidence calls={a.calls} />
       <div className="muted">
         Model attestation {a.summary.replaceAll("_", " ")} · received {clock(a.receivedMs)} · Check it yourself:{" "}
         <a href={NEAR_AI_VERIFY} target="_blank" rel="noreferrer">
@@ -306,7 +346,7 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
               <th>
                 reconcile <Measured />
               </th>
-              <th title="NEAR AI model attestation: ✓ attested · ◐ partial · ✗ unverified · – not applicable · blank = no data yet">attested</th>
+              <th title="NEAR AI model attestation: ✓ attested · ◐ partial · ✗ unverified · ⧗ unavailable (re-checked later) · – not applicable · blank = no data yet">attested</th>
             </tr>
           </thead>
           <tbody>
@@ -391,7 +431,7 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
               <td>Attested</td>
               <td>
                 The console&apos;s <code>job_attested</code> event: private-ai&apos;s ca-attest checked each NEAR AI call&apos;s TEE report, reply signature and hashes.
-                near-watch and this page only show its result.
+                near-watch and this page only show its result, plus the signed text (model id and two hashes) and the signature, so it can be re-checked.
               </td>
             </tr>
           </tbody>

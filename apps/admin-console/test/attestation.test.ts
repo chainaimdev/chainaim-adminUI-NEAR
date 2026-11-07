@@ -11,6 +11,9 @@ import { proxyGet, proxyStream } from "../lib/proxy.ts";
 import { CAIP2, drainSockets, startWatchServer, until, type Running } from "./watch-server.ts";
 
 const PLAIN = "a77e5700000000000000000000000001";
+/** fix 4: what NEAR AI signed (model id + two SHA-256 hex) and an ecdsa signature (65 bytes). */
+const SIGNED_TEXT = `deepseek-ai/DeepSeek-V4.1-Flash-1017:${"1a".repeat(32)}:${"2b".repeat(32)}`;
+const SIGNATURE = "0x" + "cd".repeat(64) + "1b";
 const JOB = "a77e5700000000000000000000000002";
 const quoted = (jobId: string) => ({
   v: 1, event: "job_quoted", ts: "2026-11-06T10:00:00.000Z", jobId, network: CAIP2, amount: "12001", totalUsd: "0.012001", expiresAt: "2026-11-06T10:15:00.000Z",
@@ -23,6 +26,7 @@ const attested = {
     step: "query", model: "nearai/deepseek-v4.1-flash", servedModel: "deepseek-ai/DeepSeek-V4.1-Flash-1017", providerId: "chatcmpl-0123456789abcdef",
     signatureKind: "provider_tee", signingAlgo: "ecdsa", signingAddress: "0x" + "ab12".repeat(10), reportFetchedAt: "2026-11-06T09:59:00.000Z",
     tdx: true, gpu: true, signature: true, hashes: true, status: "verified", reason: null,
+    signedText: SIGNED_TEXT, signatureHex: SIGNATURE,
   }],
 };
 
@@ -77,6 +81,8 @@ test("ARCH-504: the store keeps the attestation from the real near-watch on its 
   assert.equal(j.attestation?.calls[0].providerId, "chatcmpl-0123456789abcdef");
   assert.equal(j.attestation?.calls[0].signingAddress, "0x" + "ab12".repeat(10));
   assert.equal(j.attestation?.calls[0].reportFetchedMs, Date.parse("2026-11-06T09:59:00.000Z"));
+  assert.equal(j.attestation?.calls[0].signedText, SIGNED_TEXT, "fix 4: signed text arrives through the real near-watch");
+  assert.equal(j.attestation?.calls[0].signatureHex, SIGNATURE, "fix 4: signature arrives through the real near-watch");
   assert.equal(s.jobs[PLAIN].attestation, undefined, "no data -> no attestation (blank, not unverified)");
   assert.deepEqual(s.jobSummary?.attestation, { attested: 1, partial: 0, unverified: 0, unavailable: 0, not_applicable: 0 });
   assert.deepEqual(s.jobSummary?.counts, { quoted: 2, paid: 0, released: 0, expired: 0 });

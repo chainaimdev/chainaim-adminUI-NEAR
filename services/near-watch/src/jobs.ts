@@ -64,13 +64,22 @@ export const ATTEST_SUMMARIES = ["attested", "partial", "unverified", "unavailab
 export type AttestSummary = (typeof ATTEST_SUMMARIES)[number];
 export const ATTEST_STATUSES = ["verified", "unverified", "unavailable", "not_applicable"] as const;
 export type AttestStatus = (typeof ATTEST_STATUSES)[number];
-/** One model call's evidence: ids, an address, a report time, check results (null = not checked) and a short reason. */
+/**
+ * One model call's evidence: ids, an address, a report time, check results (null = not checked) and a short reason.
+ * Fix 4 (2026-11-07): signedText and signatureHex let anyone re-check the reply signature themselves. signedText is
+ * NEAR AI's signed string "<servedModel>:<sha256 request>:<sha256 response>" (or "<req>:<resp>"): a model id and two
+ * hashes, never request or reply text. Both are null on events from consoles that do not send them (and on stored rows
+ * from before; see withEvidence).
+ */
 export type AttestedCall = {
   step: "query" | "answer"; model: string; servedModel: string | null; providerId: string | null;
   signatureKind: "provider_tee" | "gateway" | null; signingAlgo: "ecdsa" | "ed25519" | null; signingAddress: string | null;
   reportFetchedMs: number | null; tdx: boolean | null; gpu: boolean | null; signature: boolean | null; hashes: boolean | null;
   status: AttestStatus; reason: string | null;
+  signedText: string | null; signatureHex: string | null;
 };
+/** A stored call from before fix 4 lacks signedText / signatureHex: read them as null so every view has the same shape. */
+export const withEvidence = (calls: readonly AttestedCall[]): AttestedCall[] => calls.map((c) => ({ ...c, signedText: c.signedText ?? null, signatureHex: c.signatureHex ?? null }));
 export type JobAttestation = { tsMs: number; summary: AttestSummary; calls: AttestedCall[]; receivedMs: number };
 
 export type JobEventInput =
@@ -169,7 +178,13 @@ const ECDSA_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const ED25519_KEY = /^(0x)?[0-9a-fA-F]{64}$/;
 /** A verifier's short reason: printable ASCII on one line, at most 200 characters. */
 const REASON = /^[\x20-\x7E]{1,200}$/;
-const ATTESTED_CALL_FIELDS = ["step", "model", "servedModel", "providerId", "signatureKind", "signingAlgo", "signingAddress", "reportFetchedAt", "tdx", "gpu", "signature", "hashes", "status", "reason"];
+/** NEAR AI's signed text: optional model id, then two lowercase SHA-256 hex hashes. Nothing else fits. */
+const SIGNED_TEXT = /^(?:[A-Za-z0-9._:\/@-]{1,128}:)?[0-9a-f]{64}:[0-9a-f]{64}$/;
+const SIGNED_TEXT_MAX = 128 + 1 + 64 + 1 + 64;
+/** ecdsa: 65 bytes r||s||v; ed25519: 64 bytes. Hex, optional 0x. */
+const ECDSA_SIG = /^(0x)?[0-9a-fA-F]{130}$/;
+const ED25519_SIG = /^(0x)?[0-9a-fA-F]{128}$/;
+const ATTESTED_CALL_FIELDS = ["step", "model", "servedModel", "providerId", "signatureKind", "signingAlgo", "signingAddress", "reportFetchedAt", "tdx", "gpu", "signature", "hashes", "status", "reason", "signedText", "signatureHex"];
 
 const isNone = (v: unknown): boolean => v === undefined || v === null;
 function oneOf<T extends string>(v: unknown, field: string, allowed: readonly T[]): T {
@@ -193,6 +208,11 @@ function parseAttestedCall(v: unknown, i: number): AttestedCall {
     if (signingAlgo === null) throw new IngestError(`${at}.signingAddress needs ${at}.signingAlgo`);
     signingAddress = signingAlgo === "ecdsa" ? str(v.signingAddress, `${at}.signingAddress`, ECDSA_ADDRESS, 42) : str(v.signingAddress, `${at}.signingAddress`, ED25519_KEY, 66);
   }
+  let signatureHex: string | null = null;
+  if (!isNone(v.signatureHex)) {
+    if (signingAlgo === null) throw new IngestError(`${at}.signatureHex needs ${at}.signingAlgo`);
+    signatureHex = signingAlgo === "ecdsa" ? str(v.signatureHex, `${at}.signatureHex`, ECDSA_SIG, 132) : str(v.signatureHex, `${at}.signatureHex`, ED25519_SIG, 130);
+  }
   return {
     step: oneOf(v.step, `${at}.step`, ["query", "answer"] as const),
     model: str(v.model, `${at}.model`, MODEL_ID, 128),
@@ -208,6 +228,8 @@ function parseAttestedCall(v: unknown, i: number): AttestedCall {
     hashes: check(v.hashes, `${at}.hashes`),
     status: oneOf(v.status, `${at}.status`, ATTEST_STATUSES),
     reason: isNone(v.reason) ? null : str(v.reason, `${at}.reason`, REASON, 200),
+    signedText: isNone(v.signedText) ? null : str(v.signedText, `${at}.signedText`, SIGNED_TEXT, SIGNED_TEXT_MAX),
+    signatureHex,
   };
 }
 
@@ -353,7 +375,7 @@ export class JobBook {
   private attested(e: Extract<JobEventInput, { event: "job_attested" }>, job: JobRow | undefined, t: number): { isNew: boolean } {
     const prev = this.store.getAttestation(e.jobId);
     if (prev && prev.network !== e.network) throw new IngestError(`job ${e.jobId} is on ${prev.network}, not ${e.network}`);
-    if (prev && (prev.tsMs > e.tsMs || (prev.tsMs === e.tsMs && prev.summary === e.summary && JSON.stringify(prev.calls) === JSON.stringify(e.calls)))) return this.repeat();
+    if (prev && (prev.tsMs > e.tsMs || (prev.tsMs === e.tsMs && prev.summary === e.summary && JSON.stringify(withEvidence(prev.calls)) === JSON.stringify(e.calls)))) return this.repeat();
     this.store.putAttestation(e.jobId, e.network, { tsMs: e.tsMs, summary: e.summary, calls: e.calls, receivedMs: t });
     this.counters.events += 1;
     if (job) this.emit(job);
@@ -367,7 +389,7 @@ export class JobBook {
     // `attestation` only when one is stored (ARCH-503): a job without one is exactly as before.
     return {
       ...job, noJobEvent: job.quotedMs === null, invoiceId: claim?.invoiceId ?? null, payer: claim?.payer ?? null, reconcile: recon?.state ?? null,
-      ...(att ? { attestation: { tsMs: att.tsMs, summary: att.summary, calls: att.calls, receivedMs: att.receivedMs } } : {}),
+      ...(att ? { attestation: { tsMs: att.tsMs, summary: att.summary, calls: withEvidence(att.calls), receivedMs: att.receivedMs } } : {}),
     };
   }
 
