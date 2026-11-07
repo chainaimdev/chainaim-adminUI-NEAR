@@ -55,8 +55,12 @@ export type JobBreakdown = {
   subtotalUsd?: string; withMarginUsd?: string;
 };
 
-/** NEAR AI model attestation of a job (ARCH-501): verified elsewhere (private-ai ca-attest), stored and shown here. */
-export const ATTEST_SUMMARIES = ["attested", "partial", "unverified", "not_applicable"] as const;
+/**
+ * NEAR AI model attestation of a job (ARCH-501): verified elsewhere (private-ai ca-attest), stored and shown here.
+ * unavailable (owner decision 2026-11-06): the evidence could not be obtained yet (signature not ready, ca-attest
+ * unreachable), as distinct from unverified (a check ran and failed). Neither is trusted; a later job_attested replaces it.
+ */
+export const ATTEST_SUMMARIES = ["attested", "partial", "unverified", "unavailable", "not_applicable"] as const;
 export type AttestSummary = (typeof ATTEST_SUMMARIES)[number];
 export const ATTEST_STATUSES = ["verified", "unverified", "unavailable", "not_applicable"] as const;
 export type AttestStatus = (typeof ATTEST_STATUSES)[number];

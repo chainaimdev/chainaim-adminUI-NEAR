@@ -218,8 +218,11 @@ export type JobView = {
   /** NEAR AI model attestation (PLAN-adminui-nearai-attestation.md ARCH-503): only when near-watch stored a job_attested. */
   attestation?: JobAttestation;
 };
-/** NEAR AI model attestation, as private-ai's ca-attest verified it (near-watch src/jobs.ts): ids, an address, times, checks. */
-export const ATTEST_SUMMARIES = ["attested", "partial", "unverified", "not_applicable"] as const;
+/**
+ * NEAR AI model attestation, as private-ai's ca-attest verified it (near-watch src/jobs.ts): ids, an address, times, checks.
+ * unavailable: the evidence could not be obtained yet (not a failed check); never shown as attested.
+ */
+export const ATTEST_SUMMARIES = ["attested", "partial", "unverified", "unavailable", "not_applicable"] as const;
 export type AttestSummary = (typeof ATTEST_SUMMARIES)[number];
 export type AttestedCall = {
   step: "query" | "answer"; model: string; servedModel: string | null; providerId: string | null;

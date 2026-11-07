@@ -78,7 +78,7 @@ test("ARCH-504: the store keeps the attestation from the real near-watch on its 
   assert.equal(j.attestation?.calls[0].signingAddress, "0x" + "ab12".repeat(10));
   assert.equal(j.attestation?.calls[0].reportFetchedMs, Date.parse("2026-11-06T09:59:00.000Z"));
   assert.equal(s.jobs[PLAIN].attestation, undefined, "no data -> no attestation (blank, not unverified)");
-  assert.deepEqual(s.jobSummary?.attestation, { attested: 1, partial: 0, unverified: 0, not_applicable: 0 });
+  assert.deepEqual(s.jobSummary?.attestation, { attested: 1, partial: 0, unverified: 0, unavailable: 0, not_applicable: 0 });
   assert.deepEqual(s.jobSummary?.counts, { quoted: 2, paid: 0, released: 0, expired: 0 });
 });
 

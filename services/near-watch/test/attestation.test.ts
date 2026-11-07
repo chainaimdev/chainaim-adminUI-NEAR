@@ -151,7 +151,7 @@ describe("NEAR AI attestation on near-watch", () => {
       tdx: true, gpu: true, signature: true, hashes: true, status: "verified", reason: null,
     });
     const list = (await (await get(app, "/api/jobs")).json()) as Record<string, any>;
-    assert.deepEqual(list.attestation, { attested: 1, partial: 0, unverified: 0, not_applicable: 0 });
+    assert.deepEqual(list.attestation, { attested: 1, partial: 0, unverified: 0, unavailable: 0, not_applicable: 0 });
     assert.equal(list.jobs.find((j: { jobId: string }) => j.jobId === id).attestation.summary, "attested");
   });
 

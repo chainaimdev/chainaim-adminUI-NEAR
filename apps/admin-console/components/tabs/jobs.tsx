@@ -23,9 +23,10 @@ const ATTEST_MARK: Record<AttestSummary, [string, string]> = {
   attested: ["✓", "attested: every NEAR AI call verified (TEE report, reply signature, hashes)"],
   partial: ["◐", "partial: some NEAR AI calls verified"],
   unverified: ["✗", "unverified: a NEAR AI call failed verification"],
+  unavailable: ["⧗", "unavailable: the evidence could not be obtained yet (signature not ready or ca-attest unreachable); not a failed check, not attested; a later re-check replaces it"],
   not_applicable: ["–", "not applicable: no NEAR AI model call in this job"],
 };
-const ATTEST_CLASS: Record<AttestSummary, string> = { attested: "matched", partial: "only_on_ledger", unverified: "mismatch", not_applicable: "pending" };
+const ATTEST_CLASS: Record<AttestSummary, string> = { attested: "matched", partial: "only_on_ledger", unverified: "mismatch", unavailable: "only_in_log", not_applicable: "pending" };
 /** A check result: passed, failed, or not checked. */
 const tick = (v: boolean | null): string => (v === null ? "not checked" : v ? "✓" : "✗");
 /** NEAR AI's own checker for one reply (docs.near.ai/cloud/verification). */

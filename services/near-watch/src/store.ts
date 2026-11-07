@@ -24,7 +24,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Row } from "./decode.ts";
-import type { AttestedCall, AttestSummary, JobAttestation, JobBreakdown, JobStep } from "./jobs.ts";
+import { ATTEST_SUMMARIES, type AttestedCall, type AttestSummary, type JobAttestation, type JobBreakdown, type JobStep } from "./jobs.ts";
 
 export const SCHEMA_VERSION = 2;
 
@@ -600,7 +600,7 @@ export class Store {
 
   /** Known jobs (rows in jobs) per attestation summary. */
   attestationCounts(network?: string): Record<AttestSummary, number> {
-    const out: Record<AttestSummary, number> = { attested: 0, partial: 0, unverified: 0, not_applicable: 0 };
+    const out = Object.fromEntries(ATTEST_SUMMARIES.map((s) => [s, 0])) as Record<AttestSummary, number>;
     const sql = `SELECT a.summary AS summary, COUNT(*) AS n FROM job_attestations a JOIN jobs j ON j.job_id = a.job_id ${network ? "WHERE j.network = ?" : ""} GROUP BY a.summary`;
     const rows = (network ? this.db.prepare(sql).all(network) : this.db.prepare(sql).all()) as { summary: AttestSummary; n: number }[];
     for (const r of rows) if (r.summary in out) out[r.summary] = r.n;
