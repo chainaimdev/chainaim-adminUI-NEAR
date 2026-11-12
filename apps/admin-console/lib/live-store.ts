@@ -224,6 +224,15 @@ function asJob(v: unknown): JobView {
     const a = v.attestation;
     need(isObj(a) && typeof a.summary === "string" && ATTEST_SET.has(a.summary) && Array.isArray(a.calls) && a.calls.every(isObj), null, "job.attestation is not an attestation");
   }
+  // Signed quote (near-watch ARCH-702) and receipt (ARCH-701), ARCH-703: absent on jobs without them; when present, ids of the right shape.
+  if (v.signedQuote !== undefined) {
+    const q = v.signedQuote;
+    need(isObj(q) && typeof q.kid === "string" && /^[0-9a-f]{32}$/.test(q.kid) && typeof q.merchantAuthSha256 === "string" && /^[0-9a-f]{64}$/.test(q.merchantAuthSha256), null, "job.signedQuote is not a key id and hash");
+  }
+  if (v.receipt !== undefined) {
+    const r = v.receipt;
+    need(isObj(r) && typeof r.receiptId === "string" && typeof r.keyId === "string" && typeof r.settled === "boolean" && (r.transaction === null || typeof r.transaction === "string"), null, "job.receipt is not a receipt");
+  }
   return v as unknown as JobView;
 }
 const ATTEST_SET = new Set<string>(ATTEST_SUMMARIES);

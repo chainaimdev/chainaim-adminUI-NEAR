@@ -217,6 +217,10 @@ export type JobView = {
   invoiceId: string | null; payer: string | null; reconcile: ReconState | null;
   /** NEAR AI model attestation (PLAN-adminui-nearai-attestation.md ARCH-503): only when near-watch stored a job_attested. */
   attestation?: JobAttestation;
+  /** ARCH-702 (near-watch): the quote was signed (AP2 merchant authorization); key id and signature hash only. */
+  signedQuote?: { kid: string; merchantAuthSha256: string };
+  /** ARCH-701 (near-watch): the job's signed receipt as the console reported it; ids and hashes only. */
+  receipt?: { tsMs: number; receiptId: string; keyId: string; resultSha256: string; filesRoot: string; settled: boolean; transaction: string | null; receivedMs: number };
 };
 /**
  * NEAR AI model attestation, as private-ai's ca-attest verified it (near-watch src/jobs.ts): ids, an address, times, checks.

@@ -14,6 +14,8 @@ import { clock, short, unitsToDecimal } from "../../lib/format.ts";
 import { labelOf, txKey, type LiveState } from "../../lib/live-store.ts";
 import { JOB_STATES, type AttestSummary, type JobStep, type JobView } from "../../lib/types.ts";
 import { Measured, Reported, TxLink } from "../ui.tsx";
+import { attestView } from "../../lib/attest-view.ts";
+import { proofRows, receiptCell, signedQuoteCell } from "../../lib/proof-view.ts";
 
 /**
  * NEAR AI model attestation (PLAN-adminui-nearai-attestation.md ARCH-504). Verified by private-ai's ca-attest, only shown
@@ -74,8 +76,16 @@ function SignatureEvidence({ calls }: { calls: NonNullable<JobView["attestation"
 function AttestationTable({ j }: { j: JobView }) {
   const a = j.attestation;
   if (!a) return null;
+  const v = attestView(j)!;
   return (
     <div className="panel tw">
+      <p className={v.tone === "bad" ? "bad" : v.tone === "warn" ? "warn" : ""}>
+        <strong>{v.label}.</strong> {v.sentence}
+        {v.action && <span className="muted"> What to do: {v.action}.</span>}
+      </p>
+      <p className="muted">This proves where and how the model ran on the masked data the gateway sent; it does not say the answer is right (that is private-ai&apos;s figure check).</p>
+      <details>
+        <summary className="muted">Technical evidence</summary>
       <table className="wide">
         <thead>
           <tr>
@@ -124,6 +134,7 @@ function AttestationTable({ j }: { j: JobView }) {
         </tbody>
       </table>
       <SignatureEvidence calls={a.calls} />
+      </details>
       <div className="muted">
         Model attestation {a.summary.replaceAll("_", " ")} · received {clock(a.receivedMs)} · Check it yourself:{" "}
         <a href={NEAR_AI_VERIFY} target="_blank" rel="noreferrer">
@@ -131,6 +142,34 @@ function AttestationTable({ j }: { j: JobView }) {
         </a>{" "}
         (paste a chat id)
       </div>
+    </div>
+  );
+}
+
+/** ARCH-703: the job's signed quote and signed receipt (key ids and hashes as near-watch holds them). */
+function ProofTable({ j }: { j: JobView }) {
+  const rows = proofRows(j);
+  if (rows.length === 0) return null;
+  return (
+    <div className="panel tw">
+      <table className="wide">
+        <thead>
+          <tr>
+            <th>signed quote and receipt</th>
+            <th>value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([k, v, full]) => (
+            <tr key={k}>
+              <td>{k}</td>
+              <td title={full || undefined}>
+                <code>{v}</code>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -347,12 +386,14 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
                 reconcile <Measured />
               </th>
               <th title="NEAR AI model attestation: ✓ attested · ◐ partial · ✗ unverified · ⧗ unavailable (re-checked later) · – not applicable · blank = no data yet">attested</th>
+              <th title="ChainAim signed the quote as a UCP checkout (AP2 merchant authorization, ES256): ✓ key id · – not signed (AP2 off) or not reported">signed quote</th>
+              <th title="The console's signed Job Evidence Receipt: ✓ settled · ⧗ pending (settlement not attached yet) · – none reported">receipt</th>
             </tr>
           </thead>
           <tbody>
             {jobs.length === 0 ? (
               <tr>
-                <td colSpan={8} className="empty">
+                <td colSpan={10} className="empty">
                   No paid jobs yet. They appear when the private-ai test console runs with --paid-jobs on and --job-feed-url pointing at near-watch.
                 </td>
               </tr>
@@ -367,8 +408,14 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
                   <td className={`st ${j.state}`}>{stateText(j)}</td>
                   <td className={`st ${recon(j) ?? ""}`}>{recon(j)?.replaceAll("_", " ") ?? "—"}</td>
                   <td className={j.attestation ? `st ${ATTEST_CLASS[j.attestation.summary]}` : ""} title={j.attestation ? ATTEST_MARK[j.attestation.summary][1] : undefined}>
-                    {j.attestation ? ATTEST_MARK[j.attestation.summary][0] : ""}
+                    {j.attestation ? `${ATTEST_MARK[j.attestation.summary][0]} ${attestView(j)!.label}` : ""}
                   </td>
+                  {[signedQuoteCell(j), receiptCell(j)].map((c, i) => (
+                    <td key={i} className={c.tone === "ok" ? "st matched" : c.tone === "warn" ? "st pending" : "muted"} title={c.title}>
+                      {c.mark}
+                      {c.text ? ` ${c.text}` : ""}
+                    </td>
+                  ))}
                 </tr>
               ))
             )}
@@ -393,6 +440,7 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
           <Strip j={sel} />
           <StepTable j={sel} />
           <AttestationTable j={sel} />
+          <ProofTable j={sel} />
           <Breakdown j={sel} decimalsOf={decimalsOf} />
         </>
       )}
@@ -426,6 +474,19 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
             <tr>
               <td>Lost compute</td>
               <td>Model cost + call fees + analyst fee of expired jobs.</td>
+            </tr>
+            <tr>
+              <td>Signed quote</td>
+              <td>
+                The console&apos;s <code>job_quoted</code> event, when it runs with AP2 on: the key id that signed the quote as a UCP checkout and the
+                signature&apos;s SHA-256. The buyer&apos;s agent verified the signature itself with its pinned key; near-watch holds no signature.
+              </td>
+            </tr>
+            <tr>
+              <td>Receipt</td>
+              <td>
+                The console&apos;s <code>job_receipt</code> event: receipt id, signing key id, result and files hashes, and the settlement transaction once attached.
+              </td>
             </tr>
             <tr>
               <td>Attested</td>

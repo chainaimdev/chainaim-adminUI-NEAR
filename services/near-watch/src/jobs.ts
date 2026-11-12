@@ -7,6 +7,10 @@
  *   job_expired   {v:1, event, ts, jobId, network}
  *   job_attested  {v:1, event, ts, jobId, network, summary, calls[]}   (PLAN-adminui-nearai-attestation.md ARCH-501..503:
  *                 the NEAR AI model attestation result private-ai's ca-attest verified; near-watch only stores and shows it)
+ *   job_receipt   {v:1, event, ts, jobId, network, receiptId, keyId, resultSha256, filesRoot, settled, transaction}
+ *                 (ARCH-701: the console's signed Job Evidence Receipt, privateAI-design-32 ARCH-615; ids and hashes only)
+ *   job_quoted may carry ap2 {kid, merchantAuthSha256} (ARCH-702: the quote was signed as an AP2 merchant authorization,
+ *                 privateAI-design-33 ARCH-628; the key id and the hash of the signature only)
  * (chainiam-private-ai test-console/console/job-feed.ts builds them.)
  *
  * Fail closed: an event is parsed strictly (every field typed and bounded, unknown fields refused), so nothing but ids,
@@ -24,7 +28,7 @@ import type { Bus } from "./events.ts";
 import type { ClaimRow, JobRow, JobState, ReconState, Store } from "./store.ts";
 
 export const JOB_STATES = ["quoted", "paid", "released", "expired"] as const;
-export const JOB_EVENTS = ["job_quoted", "job_released", "job_expired", "job_attested"] as const;
+export const JOB_EVENTS = ["job_quoted", "job_released", "job_expired", "job_attested", "job_receipt"] as const;
 export type JobEventName = (typeof JOB_EVENTS)[number];
 
 /** The paywall's release route for a job (paywall routes.ts): the claim's `route` names the job. */
@@ -82,8 +86,14 @@ export type AttestedCall = {
 export const withEvidence = (calls: readonly AttestedCall[]): AttestedCall[] => calls.map((c) => ({ ...c, signedText: c.signedText ?? null, signatureHex: c.signatureHex ?? null }));
 export type JobAttestation = { tsMs: number; summary: AttestSummary; calls: AttestedCall[]; receivedMs: number };
 
+/** ARCH-702: the job's quote was signed (AP2 merchant authorization): the signing key id and the signature's SHA-256. */
+export type SignedQuote = { kid: string; merchantAuthSha256: string };
+/** ARCH-701: the job's signed receipt as the console reported it: ids, hashes, and the settlement transaction when attached. */
+export type JobReceipt = { tsMs: number; receiptId: string; keyId: string; resultSha256: string; filesRoot: string; settled: boolean; transaction: string | null; receivedMs: number };
+
 export type JobEventInput =
-  | { event: "job_quoted"; tsMs: number; jobId: string; network: string; amount: string; totalUsd: string; expiresMs: number; steps: JobStep[]; breakdown: JobBreakdown }
+  | { event: "job_quoted"; tsMs: number; jobId: string; network: string; amount: string; totalUsd: string; expiresMs: number; steps: JobStep[]; breakdown: JobBreakdown; ap2?: SignedQuote }
+  | { event: "job_receipt"; tsMs: number; jobId: string; network: string; receiptId: string; keyId: string; resultSha256: string; filesRoot: string; settled: boolean; transaction: string | null }
   | { event: "job_released" | "job_expired"; tsMs: number; jobId: string; network: string }
   | { event: "job_attested"; tsMs: number; jobId: string; network: string; summary: AttestSummary; calls: AttestedCall[] };
 
@@ -233,6 +243,19 @@ function parseAttestedCall(v: unknown, i: number): AttestedCall {
   };
 }
 
+// ---- job_receipt (ARCH-701) and job_quoted.ap2 (ARCH-702) ----
+
+const HEX32 = /^[0-9a-f]{32}$/;
+const HEX64 = /^[0-9a-f]{64}$/;
+/** A NEAR transaction hash: base58, as claims carry it. */
+const NEAR_TX = /^[1-9A-HJ-NP-Za-km-z]{20,100}$/;
+
+function parseSignedQuote(v: unknown): SignedQuote {
+  if (!isObj(v)) throw new IngestError("ap2 must be an object {kid, merchantAuthSha256}");
+  only(v, ["kid", "merchantAuthSha256"], "ap2");
+  return { kid: str(v.kid, "ap2.kid", HEX32, 32), merchantAuthSha256: str(v.merchantAuthSha256, "ap2.merchantAuthSha256", HEX64, 64) };
+}
+
 export function parseJobEvent(input: unknown, caips: CaipMap): JobEventInput {
   if (!isObj(input)) throw new IngestError("a job event must be a JSON object");
   if (input.v !== 1) throw new IngestError("v must be 1");
@@ -245,11 +268,23 @@ export function parseJobEvent(input: unknown, caips: CaipMap): JobEventInput {
     if (!Array.isArray(input.calls) || input.calls.length > MAX_STEPS) throw new IngestError(`calls must be a list of at most ${MAX_STEPS}`);
     return { event, ...base, summary: oneOf(input.summary, "summary", ATTEST_SUMMARIES), calls: input.calls.map(parseAttestedCall) };
   }
+  if (event === "job_receipt") {
+    only(input, ["v", "event", "ts", "jobId", "network", "receiptId", "keyId", "resultSha256", "filesRoot", "settled", "transaction"], event);
+    if (typeof input.settled !== "boolean") throw new IngestError("settled must be true or false");
+    const transaction = isNone(input.transaction) ? null : str(input.transaction, "transaction", NEAR_TX, 100);
+    if (input.settled !== (transaction !== null)) throw new IngestError("a settled receipt names its transaction, and only a settled one does");
+    return {
+      event, ...base,
+      receiptId: str(input.receiptId, "receiptId", HEX32, 32), keyId: str(input.keyId, "keyId", HEX32, 32),
+      resultSha256: str(input.resultSha256, "resultSha256", HEX64, 64), filesRoot: str(input.filesRoot, "filesRoot", HEX64, 64),
+      settled: input.settled, transaction,
+    };
+  }
   if (event !== "job_quoted") {
     only(input, ["v", "event", "ts", "jobId", "network"], event);
     return { event: event as "job_released" | "job_expired", ...base };
   }
-  only(input, ["v", "event", "ts", "jobId", "network", "amount", "totalUsd", "expiresAt", "steps", "breakdown"], event);
+  only(input, ["v", "event", "ts", "jobId", "network", "amount", "totalUsd", "expiresAt", "steps", "breakdown", "ap2"], event);
   if (!isUnits(input.amount) || BigInt(input.amount) === 0n) throw new IngestError("amount must be a positive integer string of USDC base units");
   if (!Array.isArray(input.steps) || input.steps.length === 0 || input.steps.length > MAX_STEPS) throw new IngestError(`steps must be a list of 1 to ${MAX_STEPS}`);
   return {
@@ -260,6 +295,7 @@ export function parseJobEvent(input: unknown, caips: CaipMap): JobEventInput {
     expiresMs: isoMs(input.expiresAt, "expiresAt"),
     steps: input.steps.map(parseStep),
     breakdown: parseBreakdown(input.breakdown),
+    ...(input.ap2 !== undefined ? { ap2: parseSignedQuote(input.ap2) } : {}),
   };
 }
 
@@ -288,6 +324,10 @@ export type JobView = JobRow & {
   reconcile: ReconState | null;
   /** The NEAR AI model attestation (ARCH-503): present only when a job_attested was stored for this job. */
   attestation?: JobAttestation;
+  /** ARCH-702: present only when the job's job_quoted carried ap2 (the quote was signed). */
+  signedQuote?: SignedQuote;
+  /** ARCH-701: present only when a job_receipt was stored for this job. */
+  receipt?: JobReceipt;
 };
 export type JobCounts = Record<JobState, number>;
 /** attestation: known jobs per attestation summary; present only once any job_attested is stored. */
@@ -317,12 +357,15 @@ export class JobBook {
     if (prev && prev.network !== e.network) throw new IngestError(`job ${e.jobId} is on ${prev.network}, not ${e.network}`);
     const t = this.now();
     if (e.event === "job_attested") return this.attested(e, prev, t);
+    if (e.event === "job_receipt") return this.receipted(e, prev, t);
     let next: JobRow;
     if (e.event === "job_quoted") {
       if (prev?.quotedMs != null) return this.repeat();
       const claim = prev?.txHash ? null : this.store.claimByRoute(e.network, releaseRoute(e.jobId));
       const base: JobRow = prev ?? { jobId: e.jobId, network: e.network, state: "quoted", amount: null, totalUsd: null, quotedMs: null, expiresMs: null, paidMs: null, releasedMs: null, expiredMs: null, txHash: null, breakdown: null, steps: null, receivedMs: t };
       next = { ...base, amount: e.amount, totalUsd: e.totalUsd, quotedMs: e.tsMs, expiresMs: e.expiresMs, breakdown: e.breakdown, steps: e.steps };
+      // ARCH-702: stored before the job is emitted, so the stream shows the signed quote with the quote.
+      if (e.ap2) this.store.putSignedQuote(e.jobId, e.network, e.ap2);
       if (claim) next = { ...next, state: next.state === "released" ? "released" : "paid", paidMs: claim.tsMs, txHash: claim.hash };
     } else if (e.event === "job_released") {
       if (prev?.releasedMs != null) return this.repeat();
@@ -382,14 +425,33 @@ export class JobBook {
     return { isNew: true };
   }
 
+  /**
+   * job_receipt (ARCH-701): stored against the job id whether or not the job is known yet, like job_attested. A settled
+   * receipt replaces an unsettled one; the same or an older event is a repeat. Re-sent on the stream when the job is known.
+   */
+  private receipted(e: Extract<JobEventInput, { event: "job_receipt" }>, job: JobRow | undefined, t: number): { isNew: boolean } {
+    const prev = this.store.getReceipt(e.jobId);
+    if (prev && prev.network !== e.network) throw new IngestError(`job ${e.jobId} is on ${prev.network}, not ${e.network}`);
+    if (prev && (prev.settled && !e.settled || (prev.settled === e.settled && prev.tsMs >= e.tsMs))) return this.repeat();
+    this.store.putReceipt(e.jobId, e.network, { tsMs: e.tsMs, receiptId: e.receiptId, keyId: e.keyId, resultSha256: e.resultSha256, filesRoot: e.filesRoot, settled: e.settled, transaction: e.transaction, receivedMs: t });
+    this.counters.events += 1;
+    if (job) this.emit(job);
+    return { isNew: true };
+  }
+
   view(job: JobRow): JobView {
     const claim = job.txHash ? this.store.getClaim(job.network, job.txHash) : undefined;
     const recon = job.txHash ? this.store.getRecon(job.network, job.txHash) : undefined;
     const att = this.store.getAttestation(job.jobId);
+    const sq = this.store.getSignedQuote(job.jobId);
+    const rc = this.store.getReceipt(job.jobId);
     // `attestation` only when one is stored (ARCH-503): a job without one is exactly as before.
     return {
       ...job, noJobEvent: job.quotedMs === null, invoiceId: claim?.invoiceId ?? null, payer: claim?.payer ?? null, reconcile: recon?.state ?? null,
       ...(att ? { attestation: { tsMs: att.tsMs, summary: att.summary, calls: withEvidence(att.calls), receivedMs: att.receivedMs } } : {}),
+      // ARCH-701 / ARCH-702: only when stored, so a job without them is exactly as before.
+      ...(sq ? { signedQuote: { kid: sq.kid, merchantAuthSha256: sq.merchantAuthSha256 } } : {}),
+      ...(rc ? { receipt: { tsMs: rc.tsMs, receiptId: rc.receiptId, keyId: rc.keyId, resultSha256: rc.resultSha256, filesRoot: rc.filesRoot, settled: rc.settled, transaction: rc.transaction, receivedMs: rc.receivedMs } } : {}),
     };
   }
 

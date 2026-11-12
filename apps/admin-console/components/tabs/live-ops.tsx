@@ -31,6 +31,8 @@ import { Spark, ThroughputChart } from "../charts.tsx";
 import { FlowCanvas } from "../flow-canvas.tsx";
 import { SellerPayments, SellerWalletRow } from "../seller-wallet.tsx";
 import { Measured, Reported, Roads, TxLink } from "../ui.tsx";
+import { attestShare, attestView, jobsByTx } from "../../lib/attest-view.ts";
+import { txKey } from "../../lib/live-store.ts";
 
 const sec = (ms: number | null | undefined): string => (typeof ms === "number" ? `${(ms / 1000).toFixed(1)}` : "—");
 
@@ -140,6 +142,8 @@ export function LiveOpsTab({ live, now, metrics, feeds, subscribe, go }: { live:
   const payBal = payTo ? (live.balances.find((b) => b.address === payTo.address && b.network === payTo.network) ?? null) : null;
   const interval = net ? blockInterval(live, net) : null;
   const tape = live.txs.slice(0, 40);
+  const byTx = jobsByTx(live.jobs);
+  const share = attestShare(live.jobs, net);
   const agree = k.reconDecided && k.reconDecided > 0 && k.reconGaps !== null ? Math.round((100 * (k.reconDecided - k.reconGaps)) / k.reconDecided) : null;
   const feedNet = net ? (feeds?.networks[net] ?? null) : null;
   // The last claim's price is base units: shown as a decimal only with the token's decimals from /api/feeds.
@@ -178,6 +182,10 @@ export function LiveOpsTab({ live, now, metrics, feeds, subscribe, go }: { live:
         <span className="div" />
         <span>
           {net ?? "—"} roads {feedNow ? <FeedLine items={feedNow} /> : <b className="val">—</b>}
+        </span>
+        <span className="div" />
+        <span title="Paid tab 03 jobs whose NEAR AI step was attested (private-ai ca-attest), of all paid jobs on this network">
+          AI proof <b className="val">{share.paidJobs ? `${share.attestedJobs} of ${share.paidJobs}` : "—"}</b> paid jobs
         </span>
         <span className="deck-note">Payments run from the terminal (the paywall&apos;s rig); this page only watches.</span>
       </div>
@@ -347,6 +355,7 @@ export function LiveOpsTab({ live, now, metrics, feeds, subscribe, go }: { live:
                     </span>
                     <span>
                       <Roads t={t} /> <TxLink t={t} />
+                      {(() => { const v = attestView(byTx.get(txKey(t.network, t.row.hash))); return v ? <span className={v.tone === "bad" ? "bad" : v.tone === "warn" ? "warn" : v.tone === "ok" ? "ok" : "muted"} title={v.sentence}> · {v.tone === "ok" ? "AI verified" : v.label}</span> : null; })()}
                     </span>
                   </div>
                 );

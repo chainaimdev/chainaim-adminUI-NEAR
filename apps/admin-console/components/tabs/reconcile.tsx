@@ -16,6 +16,7 @@ import { clock, decimals, short, unitsToDecimal } from "../../lib/format.ts";
 import { labelOf, txKey, type LiveState } from "../../lib/live-store.ts";
 import { GAP_STATES, RECON_STATES, type ClaimRow, type GraceReport, type ReconRow, type ReconState, type SnapshotTx } from "../../lib/types.ts";
 import { Measured, Reported, Roads, TxLink } from "../ui.tsx";
+import { attestView, jobsByTx } from "../../lib/attest-view.ts";
 
 type ReconResp = { counts: Record<ReconState, number>; rows: ReconRow[] };
 
@@ -36,6 +37,7 @@ export function ReconcileTab({ live, decimalsOf, grace }: { live: LiveState; dec
   const claimBy = new Map<string, ClaimRow>();
   for (const c of [...(claims.data?.claims ?? []), ...live.claims]) claimBy.set(txKey(c.network, c.hash), c);
   const txBy = new Map(mergeTxs(live.txs, txs.data?.txs ?? []).map((t) => [t.key, t]));
+  const byTx = jobsByTx(live.jobs);
   const rows = (recon.data?.rows ?? []).filter((r) => !gapsOnly || (GAP_STATES as readonly string[]).includes(r.state));
   const counts = recon.data?.counts ?? null;
 
@@ -105,12 +107,13 @@ export function ReconcileTab({ live, decimalsOf, grace }: { live: LiveState; dec
               <th>first road</th>
               <th>state</th>
               <th>detail</th>
+              <th title="Paid and settled is the column before; this says whether the job's NEAR AI step is provable (private-ai ca-attest). A row paid but not provable is the one to look at.">compute proof</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={11} className="empty">
+                <td colSpan={12} className="empty">
                   {recon.loading ? "Loading…" : gapsOnly ? "No gaps — every claim is on chain and every x402 transfer was claimed." : "No reconcile rows yet."}
                 </td>
               </tr>
@@ -148,6 +151,7 @@ export function ReconcileTab({ live, decimalsOf, grace }: { live: LiveState; dec
                       {note.text}
                       {note.rejudged && <span aria-hidden="true"> ⓘ</span>}
                     </td>
+                    <td>{(() => { const j = byTx.get(txKey(r.network, r.hash)); const v = attestView(j); return v ? <span className={v.tone === "bad" ? "bad" : v.tone === "warn" ? "warn" : v.tone === "ok" ? "ok" : "muted"} title={`job ${j!.jobId.slice(0, 8)}… · ${v.sentence}`}>{v.label}</span> : j ? <span className="muted" title={`job ${j.jobId.slice(0, 8)}…`}>paid job · no proof yet</span> : <span className="muted">—</span>; })()}</td>
                   </tr>
                 );
               })

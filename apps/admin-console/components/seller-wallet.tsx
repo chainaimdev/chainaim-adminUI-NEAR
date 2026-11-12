@@ -26,6 +26,7 @@ import { account, age, blockHeight, decimals, short, stamp } from "../lib/format
 import { txKey, type LiveState } from "../lib/live-store.ts";
 import type { Links, SellerPayment, SellerWallet, SnapshotTx } from "../lib/types.ts";
 import { Ext, Measured, Via } from "./ui.tsx";
+import { attestShare, usdcOf } from "../lib/attest-view.ts";
 
 /** How long the card stays highlighted after a new payment or balance. */
 const PULSE_MS = 1600;
@@ -104,6 +105,7 @@ export function SellerWalletRow({ live, now, wallet: w, books }: { live: LiveSta
                 <span>Received</span>
                 <b className="ok">{decimals(w.received.amount)}</b>
                 <em>{w.received.count} paid</em>
+                {(() => { const s = attestShare(live.jobs, w.network); return s.paidJobs ? <em title="Of the paid tab 03 jobs near-watch holds: the money of those whose NEAR AI step was attested (private-ai ca-attest). Bedrock / local jobs have no enclave proof.">of tab 03 jobs: {usdcOf(s.attestedBase)} of {usdcOf(s.paidBase)} for AI-verified jobs ({s.attestedJobs}/{s.paidJobs}{s.pendingJobs ? ` · ${s.pendingJobs} pending` : ""})</em> : null; })()}
               </div>
               <div>
                 <span>In flight</span>

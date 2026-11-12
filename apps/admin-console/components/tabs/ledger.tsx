@@ -12,8 +12,11 @@ import { blockHeight, clock, decimals, ROAD_LABELS, short } from "../../lib/form
 import type { LiveState } from "../../lib/live-store.ts";
 import { ROADS, type SnapshotTx } from "../../lib/types.ts";
 import { Ext, Roads, TxLink } from "../ui.tsx";
+import { attestView, jobsByTx } from "../../lib/attest-view.ts";
+import { txKey } from "../../lib/live-store.ts";
 
 export function LedgerTab({ live }: { live: LiveState }) {
+  const byTx = jobsByTx(live.jobs);
   const [network, setNetwork] = useState("all");
   const [road, setRoad] = useState("all");
   const [x402Only, setX402Only] = useState(false);
@@ -78,12 +81,13 @@ export function LedgerTab({ live }: { live: LiveState }) {
               <th>tx</th>
               <th>roads (first → later)</th>
               <th className="r">first arrival</th>
+              <th title="For a transfer that paid a tab 03 job: was the job's NEAR AI step attested (private-ai ca-attest)? Bedrock and local steps have no enclave proof.">AI proof</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={12} className="empty">
+                <td colSpan={13} className="empty">
                   {rest.loading ? "Loading…" : "No transfer matches."}
                 </td>
               </tr>
@@ -123,6 +127,7 @@ export function LedgerTab({ live }: { live: LiveState }) {
                       {t.roads.length > 0 && <span className="muted"> {t.roads.map((r) => `${r.via} +${r.lagMs} ms`).join(", ")}</span>}
                     </td>
                     <td className="r">{t.lagMs !== null ? `${t.lagMs} ms` : "—"}</td>
+                    <td>{(() => { const j = byTx.get(txKey(t.network, t.row.hash)); const v = attestView(j); return v ? <span className={v.tone === "bad" ? "bad" : v.tone === "warn" ? "warn" : v.tone === "ok" ? "ok" : "muted"} title={`job ${j!.jobId.slice(0, 8)}… · ${v.sentence}`}>{v.label}</span> : j ? <span className="muted" title={`job ${j.jobId.slice(0, 8)}…`}>paid job · no proof yet</span> : <span className="muted">—</span>; })()}</td>
                   </tr>
                 );
               })

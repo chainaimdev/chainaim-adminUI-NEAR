@@ -10,6 +10,8 @@
  * Changed from liveops: push / poll / QuickNode Stream / Webhook panels are replaced by the per-road table; NEAR has
  * no documented WebSocket subscription, so qn-wss is listed as not built.
  */
+import { usePoll } from "../../hooks/use-poll.ts";
+import type { AttestStatus } from "../../lib/attest-status.ts";
 import { feedActivity } from "../../lib/derive.ts";
 import { age, blockHeight, networkLabel, ROAD_LABELS } from "../../lib/format.ts";
 import type { LiveState } from "../../lib/live-store.ts";
@@ -188,6 +190,7 @@ export function FeedsTab({ live, feeds, error, now }: { live: LiveState; feeds: 
           ))}
         </div>
       )}
+      <AttestService />
       <div className="inset read-me">
         <strong>Rules</strong>
         <ul>
@@ -205,5 +208,70 @@ export function FeedsTab({ live, feeds, error, now }: { live: LiveState; feeds: 
         </ul>
       </div>
     </section>
+  );
+}
+
+/**
+ * The attestation service (owner 2026-11-07): private-ai's ca-attest, read through /api/attest every 30 s. Up or down,
+ * and per NEAR AI model when its enclave report was last checked, the verdict and the reasons: the early warning before
+ * paid jobs start coming back unverified.
+ */
+function AttestService() {
+  const p = usePoll<AttestStatus>("/api/attest", 30_000);
+  const s = p.data;
+  if (!s || !s.configured) return null;
+  const yes = (v: boolean | null) => (v === true ? "✓" : v === false ? "✗" : "not checked");
+  return (
+    <div className="panel tw">
+      <h3>
+        Attestation service · private-ai ca-attest <small>{s.up ? (s.ready ? "up · every model has a checked report" : "up · not every model has a report yet") : "down"}</small>
+      </h3>
+      {!s.up ? (
+        <div className="empty bad">{s.error}. Paid jobs still run; their NEAR AI step will show as pending until it is back.</div>
+      ) : s.models.length === 0 ? (
+        <div className="empty">ca-attest attests no model (no "attest": "nearai" model in the gateway&apos;s mode).</div>
+      ) : (
+        <table className="wide">
+          <thead>
+            <tr>
+              <th>NEAR AI model</th>
+              <th>report checked</th>
+              <th>enclave signer</th>
+              <th title="Intel TDX quote of the model's enclave">TDX</th>
+              <th title={s.gpuCheck === false ? "the GPU check is off (-AttestGpuCheck off)" : "NVIDIA GPU attestation (NRAS)"}>GPU</th>
+              <th title="The report holds the fresh nonce ca-attest sent (not a replay)">fresh</th>
+              <th>verdict</th>
+            </tr>
+          </thead>
+          <tbody>
+            {s.models.flatMap((m) =>
+              m.error || m.attestations.length === 0
+                ? [
+                    <tr key={m.model}>
+                      <td>{m.model}</td>
+                      <td>{m.fetchedAt ? new Date(m.fetchedAt).toLocaleTimeString() : "—"}</td>
+                      <td colSpan={4}>—</td>
+                      <td className="st mismatch">{m.error ?? "no attestation in the report"}</td>
+                    </tr>,
+                  ]
+                : m.attestations.map((a, i) => (
+                    <tr key={`${m.model}-${i}`}>
+                      <td>{m.model}</td>
+                      <td>{m.fetchedAt ? new Date(m.fetchedAt).toLocaleTimeString() : "—"}</td>
+                      <td title={a.signingAddress}>{a.signingAddress.length > 16 ? `${a.signingAddress.slice(0, 8)}…${a.signingAddress.slice(-6)}` : a.signingAddress}</td>
+                      <td>{yes(a.tdx)}</td>
+                      <td>{yes(a.gpu)}</td>
+                      <td>{yes(a.bindsNonce)}</td>
+                      <td className={`st ${a.verified ? "matched" : "mismatch"}`}>
+                        {a.verified ? "verified" : "not verified"}
+                        {a.reasons.length > 0 && <span className="muted"> · {a.reasons.join("; ")}</span>}
+                      </td>
+                    </tr>
+                  )),
+            )}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }

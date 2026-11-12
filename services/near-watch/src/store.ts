@@ -13,6 +13,8 @@
  *           table changes, so the schema version stays 2)
  *   job_attestations  the newest NEAR AI model attestation per job (PLAN-adminui-nearai-attestation.md ARCH-502), likewise
  *           a new table only
+ *   job_signed_quotes  the AP2 signed quote of a job (ARCH-702): key id and signature hash; a new table only
+ *   job_receipts  the newest signed receipt per job (ARCH-701): ids and hashes; a new table only
  * A transfer is tied to an invoice only through its claim (same network and tx hash): an x402 NEAR transfer carries
  * no memo (chainiam-private-ai docs/NEAR-GATES.md G3), so the chain side has no invoice of its own.
  * Schema 2 (from 1): txs.invoice_id is gone, and stored rows are re-judged by the memo-free x402 rule (migrate1to2).
@@ -24,7 +26,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Row } from "./decode.ts";
-import { ATTEST_SUMMARIES, type AttestedCall, type AttestSummary, type JobAttestation, type JobBreakdown, type JobStep } from "./jobs.ts";
+import { ATTEST_SUMMARIES, type AttestedCall, type AttestSummary, type JobAttestation, type JobBreakdown, type JobReceipt, type JobStep, type SignedQuote } from "./jobs.ts";
 
 export const SCHEMA_VERSION = 2;
 
@@ -174,6 +176,14 @@ export class Store {
       CREATE TABLE IF NOT EXISTS job_attestations (
         job_id TEXT PRIMARY KEY, network TEXT NOT NULL, ts_ms INTEGER NOT NULL, summary TEXT NOT NULL, calls_json TEXT NOT NULL,
         received_ms INTEGER NOT NULL);
+    `);
+    // ARCH-701 / ARCH-702: new tables only, keyed by job id alone (an event may come before the job's row).
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS job_signed_quotes (
+        job_id TEXT PRIMARY KEY, network TEXT NOT NULL, kid TEXT NOT NULL, merchant_auth_sha256 TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS job_receipts (
+        job_id TEXT PRIMARY KEY, network TEXT NOT NULL, ts_ms INTEGER NOT NULL, receipt_id TEXT NOT NULL, key_id TEXT NOT NULL,
+        result_sha256 TEXT NOT NULL, files_root TEXT NOT NULL, settled INTEGER NOT NULL, tx_hash TEXT, received_ms INTEGER NOT NULL);
     `);
     const v = this.db.prepare("SELECT value FROM meta WHERE key = 'schema'").get() as { value: string } | undefined;
     if (!v) this.db.prepare("INSERT INTO meta (key, value) VALUES ('schema', ?)").run(String(SCHEMA_VERSION));
@@ -605,6 +615,32 @@ export class Store {
     const rows = (network ? this.db.prepare(sql).all(network) : this.db.prepare(sql).all()) as { summary: AttestSummary; n: number }[];
     for (const r of rows) if (r.summary in out) out[r.summary] = r.n;
     return out;
+  }
+
+  // ---- signed quote (ARCH-702) and receipt (ARCH-701) per job ----
+
+  getSignedQuote(jobId: string): (SignedQuote & { network: string }) | undefined {
+    const r = this.db.prepare("SELECT * FROM job_signed_quotes WHERE job_id = ?").get(jobId) as { network: string; kid: string; merchant_auth_sha256: string } | undefined;
+    return r ? { network: r.network, kid: r.kid, merchantAuthSha256: r.merchant_auth_sha256 } : undefined;
+  }
+
+  putSignedQuote(jobId: string, network: string, q: SignedQuote): void {
+    this.db.prepare(`INSERT INTO job_signed_quotes (job_id, network, kid, merchant_auth_sha256) VALUES (?, ?, ?, ?)
+      ON CONFLICT (job_id) DO UPDATE SET kid = excluded.kid, merchant_auth_sha256 = excluded.merchant_auth_sha256`).run(jobId, network, q.kid, q.merchantAuthSha256);
+  }
+
+  getReceipt(jobId: string): (JobReceipt & { network: string }) | undefined {
+    const r = this.db.prepare("SELECT * FROM job_receipts WHERE job_id = ?").get(jobId) as
+      | { network: string; ts_ms: number; receipt_id: string; key_id: string; result_sha256: string; files_root: string; settled: number; tx_hash: string | null; received_ms: number }
+      | undefined;
+    return r ? { network: r.network, tsMs: r.ts_ms, receiptId: r.receipt_id, keyId: r.key_id, resultSha256: r.result_sha256, filesRoot: r.files_root, settled: r.settled === 1, transaction: r.tx_hash, receivedMs: r.received_ms } : undefined;
+  }
+
+  putReceipt(jobId: string, network: string, rc: JobReceipt): void {
+    this.db.prepare(`INSERT INTO job_receipts (job_id, network, ts_ms, receipt_id, key_id, result_sha256, files_root, settled, tx_hash, received_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (job_id) DO UPDATE SET ts_ms = excluded.ts_ms, receipt_id = excluded.receipt_id, key_id = excluded.key_id, result_sha256 = excluded.result_sha256,
+        files_root = excluded.files_root, settled = excluded.settled, tx_hash = excluded.tx_hash, received_ms = excluded.received_ms`)
+      .run(jobId, network, rc.tsMs, rc.receiptId, rc.keyId, rc.resultSha256, rc.filesRoot, rc.settled ? 1 : 0, rc.transaction, rc.receivedMs);
   }
 
   /** The claim whose route is `route` (a job's release route), oldest first. */

@@ -65,3 +65,21 @@
   - ca-near-watch was not rebuilt and the 8800 UI was not restarted; both are owner steps.
   - private-ai has no `job_attested` sender yet (its plan ARCH-412). Until then the column stays blank.
   - ARCH-506 (live) is an owner step.
+
+## 2026-11-11: signed quote and receipt per paid job (ARCH-701..703; chainaim-private-ai privateAI-design-33 section 7, chat near-ai-impl-8)
+- ARCH-IDs new here (unused before): ARCH-701 job_receipt ingest, ARCH-702 job_quoted.ap2, ARCH-703 Jobs tab display.
+- ARCH-701 (`services/near-watch/src/jobs.ts`): JOB_EVENTS gains `job_receipt` {receiptId 32 hex, keyId 32 hex, resultSha256
+  and filesRoot 64 hex, settled, transaction base58 or null; settled iff transaction}; unknown fields refused. Stored in a
+  new table `job_receipts` (no table altered, schema stays 2), before its job too; a settled receipt replaces an unsettled
+  one, never the reverse. JobView.receipt only when stored.
+- ARCH-702: job_quoted may carry `ap2 {kid 32 hex, merchantAuthSha256 64 hex}`, stored in new table `job_signed_quotes`;
+  JobView.signedQuote only when stored. A job without either is exactly as before.
+- ARCH-703 (`apps/admin-console`): lib/proof-view.ts (pure), Jobs tab columns "signed quote" (✓ key id / –) and "receipt"
+  (✓ settled / ⧗ pending / –), job detail table (key id, quote hash, receipt id, signing key, result hash, files root,
+  settlement), "Where this comes from" rows; lib/types.ts; live-store.ts asJob checks both shapes when present.
+- Tests (Linux workspace): near-watch 72/72 incl. new test/proofs.test.ts 7; `tsc -p .` OK. admin-console 64/64 incl. new
+  test/proof-view.test.ts 3 and jobs.test.ts +1; `tsc -p .` OK. `next build` not run here (owner: desk.ps1 -All rebuilds
+  the UI when its source changed; nearadminup.ps1 rebuilds ca-near-watch).
+- Private side: the console sends job_receipt with --job-feed-receipts on and ap2 with --job-feed-ap2 on; private-ai
+  up.ps1 now turns both on when the feed is on. Its test-console/test/job-feed-ap2.test.ts posts both to this near-watch's
+  real code and finds them stored.

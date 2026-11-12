@@ -9,6 +9,7 @@
  * Dropped from liveops: per-network tokens (RLUSD / TUSD) and the Devnet direct lane. near-watch watches one network
  * with one token (NEAR_USDC_CONTRACT); its symbol and decimals come from the data (balances, Seller Wallet, /api/feeds).
  */
+import { attestAttention } from "./attest-view.ts";
 import { sumDecimal } from "./format.ts";
 import { labelOf, tokenCode, txKey, type LiveState, type ReconItem, type TxItem } from "./live-store.ts";
 import {
@@ -253,7 +254,7 @@ export function inFlight(state: LiveState, now: number): number {
   ).length;
 }
 
-export type Attention = { level: "warn" | "error"; title: string; detail: string; tab: "Reconcile" | "Feeds" | "Live ops" | null; at: number };
+export type Attention = { level: "warn" | "error"; title: string; detail: string; tab: "Reconcile" | "Feeds" | "Live ops" | "Jobs" | null; at: number };
 
 const RECON_TITLE: Record<string, string> = { only_in_log: "Claimed, not on chain", only_on_ledger: "Money nobody claimed", mismatch: "Claim and chain disagree" };
 
@@ -275,6 +276,8 @@ export function attention(state: LiveState, now: number, list: Buyer[]): Attenti
       out.push({ level: f.reset ? "error" : "warn", title: `road ${f.road} ${f.reset ? "stopped (network reset)" : f.state}`, detail: `${n} · ${f.provider} · ${f.errors} error(s)${f.lagBlocks !== null ? ` · ${f.lagBlocks} block(s) behind` : ""}`, tab: "Feeds", at: st.at });
     }
   }
+  // NEAR AI model attestation (owner 2026-11-07): a paid job whose AI step failed, was partly verified, or stays pending.
+  for (const a of attestAttention(state.jobs, now)) out.push({ level: a.level, title: a.title, detail: a.detail, tab: "Jobs", at: a.at });
   for (const b of state.balances) {
     // NEP-145: an account not registered with the token contract cannot receive it; a pay-to like that cannot be paid.
     if (b.registered === false && b.role === "payto") out.push({ level: "error", title: `${b.label} not registered with ${b.asset.code}`, detail: `${b.address} · storage_deposit needed before it can be paid`, tab: null, at: b.at });

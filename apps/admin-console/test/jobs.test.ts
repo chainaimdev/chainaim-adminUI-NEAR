@@ -120,6 +120,20 @@ test("ARCH-210: a malformed job event is refused and counted, the state unchange
   }
 });
 
+test("ARCH-703: a job event's signedQuote and receipt are kept when well formed, and a malformed one is refused, the state unchanged", () => {
+  const s = replay(events);
+  const signedQuote = { kid: "83816e6fd32b879fd96d0318a40cd40d", merchantAuthSha256: "a".repeat(64) };
+  const receipt = { tsMs: 1, receiptId: "b".repeat(32), keyId: "d27d1e9f17a0104e34c46cf3e5233f23", resultSha256: "c".repeat(64), filesRoot: "d".repeat(64), settled: true, transaction: TX_HASH, receivedMs: 2 };
+  const good = applyEvent(s, "job", { job: { ...s.jobs[JOB], signedQuote, receipt }, summary: s.jobSummary });
+  assert.equal(good.stats.errors, s.stats.errors);
+  assert.deepEqual([good.jobs[JOB].signedQuote, good.jobs[JOB].receipt], [signedQuote, receipt]);
+  for (const bad of [{ ...s.jobs[JOB], signedQuote: { kid: "KID", merchantAuthSha256: "x" } }, { ...s.jobs[JOB], receipt: { receiptId: "b", settled: "yes" } }]) {
+    const next = applyEvent(s, "job", { job: bad, summary: s.jobSummary });
+    assert.equal(next.stats.errors, s.stats.errors + 1);
+    assert.equal(next.jobs, s.jobs);
+  }
+});
+
 test("ARCH-210: /api/watch/jobs and /api/watch/job/<id> through the proxy to the real near-watch", async () => {
   const get = (path: string) => new Request(`http://console.local/api/watch/${path}`);
   const list = await proxyGet(get("jobs?state=released"), ["jobs"], nw.cfg());
