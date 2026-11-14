@@ -6,7 +6,13 @@ This console shows, as they happen, the NEAR TestNet USDC payments and paid jobs
   (`job_quoted`, `job_released`, `job_expired`)
 - **what the chain shows**: NEP-141 USDC transfers in final blocks, read over up to three independent roads
 
-The two are reconciled payment by payment (`matched`, `pending`, `only_in_log`, `only_on_ledger`, `mismatch`).
+The two are reconciled payment by payment (`matched`, `pending`, `only_in_log`, `only_on_ledger`, `mismatch`). For each
+paid job it also shows the deal: ChainAim's signed quote, the tenant's signed checkout mandate, the signed receipt and
+the NEAR AI attestation.
+
+Built at **NEAR HACKATHON** (1 to 14 Nov 2026) as the companion of
+[ChainAim Outcome AI (chainaim-private-ai)](https://github.com/chainaimdev/chainaim-private-ai). What was ported from the
+earlier XRPL console and what was built in the window: [HACKATHON-DISCLOSURE.md](HACKATHON-DISCLOSURE.md).
 
 ## How to run it
 
@@ -20,9 +26,9 @@ the accounts to watch. Then private-ai's one-time setup.
 **2. Run all containers and both UIs (every day):** two commands, this repo first.
 
 ```powershell
-cd C:\SATHYA\CHAINAIM3003\mcp-servers\chainaim-adminUI-NEAR
+cd <your-folder>\chainaim-adminUI-NEAR
 .\nearadminup.ps1              # ca-near-watch + admin UI http://127.0.0.1:8800
-cd C:\SATHYA\CHAINAIM3003\mcp-servers\chainiam-private-ai
+cd <your-folder>\chainaim-private-ai
 .\test-console\up.ps1          # six backend containers + console UI http://127.0.0.1:8730
 ```
 
@@ -68,13 +74,24 @@ The first road to deliver a transfer wins; the others are recorded with their la
 
 | Do | See |
 |---|---|
-| `npm --prefix services\near-watch test` | 59 tests pass, over a recorded real TestNet x402 NEAR payment (`H3ZFsVY1…`, 0.01 USDC, a relayed NEP-366 delegate `ft_transfer` with no memo): roads, reconcile, late claims and late transfers, restart without duplicates, paid jobs, NEAR AI attestation per job, relayer gas alert, no key in any API response |
-| `npm --prefix apps\admin-console test` | 48 tests pass (proxy rules, SSE pass-through, store and derive over a real near-watch, jobs, attestation) |
+| `npm --prefix services\near-watch test` (no install needed: no runtime dependencies) | 77 tests pass, 1 skipped (v1.1.0), over a recorded real TestNet x402 NEAR payment (`H3ZFsVY1…`, 0.01 USDC, a relayed NEP-366 delegate `ft_transfer` with no memo): roads, reconcile, late claims and late transfers, restart without duplicates, paid jobs, NEAR AI attestation per job, relayer gas alert, no key in any API response |
+| `npm --prefix apps\admin-console install`, then `npm --prefix apps\admin-console test` | 68 tests pass (v1.1.0: proxy rules, SSE pass-through, store and derive over a real near-watch, jobs, attestation, the deal) |
 | A paid job using the NEAR AI model, with private-ai's `ca-attest` on | **Jobs** shows it **attested ✓** (◐ partial · ✗ unverified · – not applicable; blank = no data), the "attested jobs N of M" tile, and per model call the chat id, signer, report time and TDX / GPU / signature / hashes checks, with a link to https://cloud.near.ai/verify. near-watch only stores and shows the result; it never holds the NEAR AI key (PLAN-adminui-nearai-attestation.md) |
+| A paid job whose buyer agent signed an AP2 checkout mandate (private-ai v2.0.0 and later, `--job-feed-mandate on`) | **Jobs** shows **signed quote ✓** (ChainAim's key id), **tenant mandate ✓** (the tenant, e.g. t02) and **receipt ✓ settled**; the job's panel says "The deal: ChainAim signed the quote ✓ · tenant t02 signed the mandate ✓". A counter-offer job shows its smaller price (e.g. $0.010000) |
 | `.\nearadminup.ps1`, then open http://127.0.0.1:8800 | Header chips show each road and the final block height; blocks stream in about every second |
 | One paid call or paid job in private-ai | **Live ops** shows a `claim` and a chain `tx`; **Jobs** shows `quoted` → `released`; **Reconcile** shows `matched` within `--settle-grace-blocks` (30) |
 | `docker compose restart near-watch` | It backfills from its saved cursor; no transfer appears twice |
 | `curl /api/feeds` with the admin key | Provider hosts only; QuickNode tokens and `?apiKey=` never appear |
+
+## Built with: AI assistance and libraries
+
+**AI assistance.** Claude (Anthropic) was used to design, write, test and document this repository, under the team's
+direction and review; each change was run and tested before release (BUILD_LOG.md).
+
+**Libraries:** the admin UI uses Next.js, React (`react`, `react-dom`), Tailwind CSS (`tailwindcss`, `@tailwindcss/postcss`,
+`postcss`), `clsx` and `tailwind-merge`. near-watch has no runtime dependencies (Node.js 24 built-ins, including
+`node:sqlite`); it reads NEAR through public RPC, neardata and optional QuickNode endpoints. Runtime: Node.js 24, Docker
+Compose. Ported code is listed in [HACKATHON-DISCLOSURE.md](HACKATHON-DISCLOSURE.md).
 
 ## Layout
 

@@ -23,4 +23,11 @@
 - `scripts/record-fixture.ts` and the recorded **real** testnet fixture. It holds transaction `H3ZFsVY1zDSQKsL3dktYBcNHSLiE8GpR5JtytFLjnbqD`: a real x402 NEAR payment of 0.01 USDC, relayed as a NEP-366 delegate `ft_transfer` with no memo. The transaction is in block 276202561 and its USDC receipt executes in 276202563.
 - `test/neardata-double.ts`, `test/near-rpc-double.ts` and every test under `services/near-watch/test`.
 
+**Built in the window, paid jobs and the deal (v1.0 to v1.1.0, 5 to 14 Nov).**
+- The Jobs tab: `job_quoted` / `job_released` / `job_expired` events from private-ai's console, per-step cost, reconcile per job.
+- NEAR AI attestation per job (`job_attested`): verdict, signed text and signature shown so anyone can re-check.
+- `job_receipt` (ARCH-701..703): the signed receipt's id, key id and hashes, and ChainAim's signed quote per job.
+- `job_receipt.mandate` (ARCH-704/705, v1.1.0, 14 Nov): the tenant's AP2 checkout mandate (tenant, key id, hash) and the
+  "deal" line on the Jobs tab.
+
 **Not built.** `services/custody`, the OutLayer TEE work, is step 4 and is deferred by design. `qn-wss` is not built either, because no NEAR WebSocket subscription is documented.
