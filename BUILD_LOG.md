@@ -83,3 +83,15 @@
 - Private side: the console sends job_receipt with --job-feed-receipts on and ap2 with --job-feed-ap2 on; private-ai
   up.ps1 now turns both on when the feed is on. Its test-console/test/job-feed-ap2.test.ts posts both to this near-watch's
   real code and finds them stored.
+
+## 2026-11-14: the tenant's checkout mandate per paid job (ARCH-704..705; chainaim-private-ai privateAI-design-42 ARCH-710, chat near-ai-impl-15)
+
+- ARCH-704 (`services/near-watch`): job_receipt may carry `mandate {kid 32 hex, tenant ^[a-z0-9_-]{1,32}$, sha256 64 hex}`;
+  any other field (accountId, nonce, the token) is refused with the whole event. New table `job_mandates`, written and
+  cleared with the job's receipt; JobView.mandate only when stored. A job without one is exactly as before.
+- ARCH-705 (`apps/admin-console`): lib/proof-view.ts mandateCell + dealText + three detail rows; Jobs table column
+  "tenant mandate" (colSpan 11); "Where this comes from" row; lib/types.ts; live-store.ts asJob refuses a malformed mandate.
+- Tests (Linux workspace): near-watch 77/78 (1 skip, as before) incl. new test/mandate.test.ts 5; `tsc -p .` OK.
+  admin-console 68/68 incl. new test/mandate-view.test.ts 4; `tsc -p .` OK. `next build` not run here (desk.ps1 -All
+  rebuilds the UI; nearadminup.ps1 rebuilds ca-near-watch). Private side: test-console/test/job-feed-mandate.test.ts posts
+  the mandate to this near-watch's real code and finds it stored.

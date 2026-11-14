@@ -15,6 +15,7 @@
  *           a new table only
  *   job_signed_quotes  the AP2 signed quote of a job (ARCH-702): key id and signature hash; a new table only
  *   job_receipts  the newest signed receipt per job (ARCH-701): ids and hashes; a new table only
+ *   job_mandates  the checkout mandate that receipt records (ARCH-704): tenant key id, tenant id, hash; a new table only
  * A transfer is tied to an invoice only through its claim (same network and tx hash): an x402 NEAR transfer carries
  * no memo (chainiam-private-ai docs/NEAR-GATES.md G3), so the chain side has no invoice of its own.
  * Schema 2 (from 1): txs.invoice_id is gone, and stored rows are re-judged by the memo-free x402 rule (migrate1to2).
@@ -26,7 +27,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Row } from "./decode.ts";
-import { ATTEST_SUMMARIES, type AttestedCall, type AttestSummary, type JobAttestation, type JobBreakdown, type JobReceipt, type JobStep, type SignedQuote } from "./jobs.ts";
+import { ATTEST_SUMMARIES, type AttestedCall, type AttestSummary, type JobAttestation, type JobBreakdown, type JobReceipt, type JobStep, type ReceiptMandate, type SignedQuote } from "./jobs.ts";
 
 export const SCHEMA_VERSION = 2;
 
@@ -184,6 +185,11 @@ export class Store {
       CREATE TABLE IF NOT EXISTS job_receipts (
         job_id TEXT PRIMARY KEY, network TEXT NOT NULL, ts_ms INTEGER NOT NULL, receipt_id TEXT NOT NULL, key_id TEXT NOT NULL,
         result_sha256 TEXT NOT NULL, files_root TEXT NOT NULL, settled INTEGER NOT NULL, tx_hash TEXT, received_ms INTEGER NOT NULL);
+    `);
+    // ARCH-704: a new table only, keyed by job id; written and cleared with the job's receipt.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS job_mandates (
+        job_id TEXT PRIMARY KEY, network TEXT NOT NULL, kid TEXT NOT NULL, tenant TEXT NOT NULL, sha256 TEXT NOT NULL);
     `);
     const v = this.db.prepare("SELECT value FROM meta WHERE key = 'schema'").get() as { value: string } | undefined;
     if (!v) this.db.prepare("INSERT INTO meta (key, value) VALUES ('schema', ?)").run(String(SCHEMA_VERSION));
@@ -641,6 +647,22 @@ export class Store {
       ON CONFLICT (job_id) DO UPDATE SET ts_ms = excluded.ts_ms, receipt_id = excluded.receipt_id, key_id = excluded.key_id, result_sha256 = excluded.result_sha256,
         files_root = excluded.files_root, settled = excluded.settled, tx_hash = excluded.tx_hash, received_ms = excluded.received_ms`)
       .run(jobId, network, rc.tsMs, rc.receiptId, rc.keyId, rc.resultSha256, rc.filesRoot, rc.settled ? 1 : 0, rc.transaction, rc.receivedMs);
+  }
+
+  // ---- the checkout mandate a job's receipt records (ARCH-704) ----
+
+  getMandate(jobId: string): (ReceiptMandate & { network: string }) | undefined {
+    const r = this.db.prepare("SELECT * FROM job_mandates WHERE job_id = ?").get(jobId) as { network: string; kid: string; tenant: string; sha256: string } | undefined;
+    return r ? { network: r.network, kid: r.kid, tenant: r.tenant, sha256: r.sha256 } : undefined;
+  }
+
+  putMandate(jobId: string, network: string, m: ReceiptMandate): void {
+    this.db.prepare(`INSERT INTO job_mandates (job_id, network, kid, tenant, sha256) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (job_id) DO UPDATE SET kid = excluded.kid, tenant = excluded.tenant, sha256 = excluded.sha256`).run(jobId, network, m.kid, m.tenant, m.sha256);
+  }
+
+  dropMandate(jobId: string): void {
+    this.db.prepare("DELETE FROM job_mandates WHERE job_id = ?").run(jobId);
   }
 
   /** The claim whose route is `route` (a job's release route), oldest first. */

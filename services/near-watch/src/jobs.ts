@@ -11,6 +11,9 @@
  *                 (ARCH-701: the console's signed Job Evidence Receipt, privateAI-design-32 ARCH-615; ids and hashes only)
  *   job_quoted may carry ap2 {kid, merchantAuthSha256} (ARCH-702: the quote was signed as an AP2 merchant authorization,
  *                 privateAI-design-33 ARCH-628; the key id and the hash of the signature only)
+ *   job_receipt may carry mandate {kid, tenant, sha256} (ARCH-704: the buyer agent's AP2 checkout mandate the receipt
+ *                 records, verified by ChainAim's signer before the job ran; privateAI-design-42 ARCH-710; the tenant's key
+ *                 id, the tenant id and the mandate's hash only, never the mandate, its nonce or an account)
  * (chainiam-private-ai test-console/console/job-feed.ts builds them.)
  *
  * Fail closed: an event is parsed strictly (every field typed and bounded, unknown fields refused), so nothing but ids,
@@ -90,10 +93,12 @@ export type JobAttestation = { tsMs: number; summary: AttestSummary; calls: Atte
 export type SignedQuote = { kid: string; merchantAuthSha256: string };
 /** ARCH-701: the job's signed receipt as the console reported it: ids, hashes, and the settlement transaction when attached. */
 export type JobReceipt = { tsMs: number; receiptId: string; keyId: string; resultSha256: string; filesRoot: string; settled: boolean; transaction: string | null; receivedMs: number };
+/** ARCH-704: the buyer agent's checkout mandate the job's receipt records: the tenant's key id, the tenant id, the mandate's SHA-256. */
+export type ReceiptMandate = { kid: string; tenant: string; sha256: string };
 
 export type JobEventInput =
   | { event: "job_quoted"; tsMs: number; jobId: string; network: string; amount: string; totalUsd: string; expiresMs: number; steps: JobStep[]; breakdown: JobBreakdown; ap2?: SignedQuote }
-  | { event: "job_receipt"; tsMs: number; jobId: string; network: string; receiptId: string; keyId: string; resultSha256: string; filesRoot: string; settled: boolean; transaction: string | null }
+  | { event: "job_receipt"; tsMs: number; jobId: string; network: string; receiptId: string; keyId: string; resultSha256: string; filesRoot: string; settled: boolean; transaction: string | null; mandate?: ReceiptMandate }
   | { event: "job_released" | "job_expired"; tsMs: number; jobId: string; network: string }
   | { event: "job_attested"; tsMs: number; jobId: string; network: string; summary: AttestSummary; calls: AttestedCall[] };
 
@@ -250,6 +255,15 @@ const HEX64 = /^[0-9a-f]{64}$/;
 /** A NEAR transaction hash: base58, as claims carry it. */
 const NEAR_TX = /^[1-9A-HJ-NP-Za-km-z]{20,100}$/;
 
+/** A tenant id as private-ai's mandate key registry names one (packages/ap2 mandate.ts parseMandateRegistry). */
+const TENANT = /^[a-z0-9_-]{1,32}$/;
+
+function parseReceiptMandate(v: unknown): ReceiptMandate {
+  if (!isObj(v)) throw new IngestError("mandate must be an object {kid, tenant, sha256}");
+  only(v, ["kid", "tenant", "sha256"], "mandate");
+  return { kid: str(v.kid, "mandate.kid", HEX32, 32), tenant: str(v.tenant, "mandate.tenant", TENANT, 32), sha256: str(v.sha256, "mandate.sha256", HEX64, 64) };
+}
+
 function parseSignedQuote(v: unknown): SignedQuote {
   if (!isObj(v)) throw new IngestError("ap2 must be an object {kid, merchantAuthSha256}");
   only(v, ["kid", "merchantAuthSha256"], "ap2");
@@ -269,7 +283,7 @@ export function parseJobEvent(input: unknown, caips: CaipMap): JobEventInput {
     return { event, ...base, summary: oneOf(input.summary, "summary", ATTEST_SUMMARIES), calls: input.calls.map(parseAttestedCall) };
   }
   if (event === "job_receipt") {
-    only(input, ["v", "event", "ts", "jobId", "network", "receiptId", "keyId", "resultSha256", "filesRoot", "settled", "transaction"], event);
+    only(input, ["v", "event", "ts", "jobId", "network", "receiptId", "keyId", "resultSha256", "filesRoot", "settled", "transaction", "mandate"], event);
     if (typeof input.settled !== "boolean") throw new IngestError("settled must be true or false");
     const transaction = isNone(input.transaction) ? null : str(input.transaction, "transaction", NEAR_TX, 100);
     if (input.settled !== (transaction !== null)) throw new IngestError("a settled receipt names its transaction, and only a settled one does");
@@ -278,6 +292,7 @@ export function parseJobEvent(input: unknown, caips: CaipMap): JobEventInput {
       receiptId: str(input.receiptId, "receiptId", HEX32, 32), keyId: str(input.keyId, "keyId", HEX32, 32),
       resultSha256: str(input.resultSha256, "resultSha256", HEX64, 64), filesRoot: str(input.filesRoot, "filesRoot", HEX64, 64),
       settled: input.settled, transaction,
+      ...(input.mandate !== undefined ? { mandate: parseReceiptMandate(input.mandate) } : {}),
     };
   }
   if (event !== "job_quoted") {
@@ -328,6 +343,8 @@ export type JobView = JobRow & {
   signedQuote?: SignedQuote;
   /** ARCH-701: present only when a job_receipt was stored for this job. */
   receipt?: JobReceipt;
+  /** ARCH-704: present only when a stored job_receipt carried the buyer agent's checkout mandate. */
+  mandate?: ReceiptMandate;
 };
 export type JobCounts = Record<JobState, number>;
 /** attestation: known jobs per attestation summary; present only once any job_attested is stored. */
@@ -434,6 +451,9 @@ export class JobBook {
     if (prev && prev.network !== e.network) throw new IngestError(`job ${e.jobId} is on ${prev.network}, not ${e.network}`);
     if (prev && (prev.settled && !e.settled || (prev.settled === e.settled && prev.tsMs >= e.tsMs))) return this.repeat();
     this.store.putReceipt(e.jobId, e.network, { tsMs: e.tsMs, receiptId: e.receiptId, keyId: e.keyId, resultSha256: e.resultSha256, filesRoot: e.filesRoot, settled: e.settled, transaction: e.transaction, receivedMs: t });
+    // ARCH-704: the receipt's mandate, kept beside it; a receipt that replaces it without one leaves no stale mandate.
+    if (e.mandate) this.store.putMandate(e.jobId, e.network, e.mandate);
+    else this.store.dropMandate(e.jobId);
     this.counters.events += 1;
     if (job) this.emit(job);
     return { isNew: true };
@@ -445,6 +465,7 @@ export class JobBook {
     const att = this.store.getAttestation(job.jobId);
     const sq = this.store.getSignedQuote(job.jobId);
     const rc = this.store.getReceipt(job.jobId);
+    const md = rc ? this.store.getMandate(job.jobId) : undefined;
     // `attestation` only when one is stored (ARCH-503): a job without one is exactly as before.
     return {
       ...job, noJobEvent: job.quotedMs === null, invoiceId: claim?.invoiceId ?? null, payer: claim?.payer ?? null, reconcile: recon?.state ?? null,
@@ -452,6 +473,8 @@ export class JobBook {
       // ARCH-701 / ARCH-702: only when stored, so a job without them is exactly as before.
       ...(sq ? { signedQuote: { kid: sq.kid, merchantAuthSha256: sq.merchantAuthSha256 } } : {}),
       ...(rc ? { receipt: { tsMs: rc.tsMs, receiptId: rc.receiptId, keyId: rc.keyId, resultSha256: rc.resultSha256, filesRoot: rc.filesRoot, settled: rc.settled, transaction: rc.transaction, receivedMs: rc.receivedMs } } : {}),
+      // ARCH-704: only when the stored receipt carried one, so a job without it is exactly as before.
+      ...(md ? { mandate: { kid: md.kid, tenant: md.tenant, sha256: md.sha256 } } : {}),
     };
   }
 

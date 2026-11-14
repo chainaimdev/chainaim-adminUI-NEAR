@@ -15,7 +15,7 @@ import { labelOf, txKey, type LiveState } from "../../lib/live-store.ts";
 import { JOB_STATES, type AttestSummary, type JobStep, type JobView } from "../../lib/types.ts";
 import { Measured, Reported, TxLink } from "../ui.tsx";
 import { attestView } from "../../lib/attest-view.ts";
-import { proofRows, receiptCell, signedQuoteCell } from "../../lib/proof-view.ts";
+import { dealText, mandateCell, proofRows, receiptCell, signedQuoteCell } from "../../lib/proof-view.ts";
 
 /**
  * NEAR AI model attestation (PLAN-adminui-nearai-attestation.md ARCH-504). Verified by private-ai's ca-attest, only shown
@@ -150,12 +150,14 @@ function AttestationTable({ j }: { j: JobView }) {
 function ProofTable({ j }: { j: JobView }) {
   const rows = proofRows(j);
   if (rows.length === 0) return null;
+  const deal = dealText(j);
   return (
     <div className="panel tw">
+      {deal && <p className="src">The deal: {deal}</p>}
       <table className="wide">
         <thead>
           <tr>
-            <th>signed quote and receipt</th>
+            <th>signed quote, mandate and receipt</th>
             <th>value</th>
           </tr>
         </thead>
@@ -387,13 +389,14 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
               </th>
               <th title="NEAR AI model attestation: ✓ attested · ◐ partial · ✗ unverified · ⧗ unavailable (re-checked later) · – not applicable · blank = no data yet">attested</th>
               <th title="ChainAim signed the quote as a UCP checkout (AP2 merchant authorization, ES256): ✓ key id · – not signed (AP2 off) or not reported">signed quote</th>
+              <th title="The buyer agent's AP2 checkout mandate, signed with the tenant's key and verified by ChainAim's signer before the job ran: ✓ tenant · – none reported">tenant mandate</th>
               <th title="The console's signed Job Evidence Receipt: ✓ settled · ⧗ pending (settlement not attached yet) · – none reported">receipt</th>
             </tr>
           </thead>
           <tbody>
             {jobs.length === 0 ? (
               <tr>
-                <td colSpan={10} className="empty">
+                <td colSpan={11} className="empty">
                   No paid jobs yet. They appear when the private-ai test console runs with --paid-jobs on and --job-feed-url pointing at near-watch.
                 </td>
               </tr>
@@ -410,7 +413,7 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
                   <td className={j.attestation ? `st ${ATTEST_CLASS[j.attestation.summary]}` : ""} title={j.attestation ? ATTEST_MARK[j.attestation.summary][1] : undefined}>
                     {j.attestation ? `${ATTEST_MARK[j.attestation.summary][0]} ${attestView(j)!.label}` : ""}
                   </td>
-                  {[signedQuoteCell(j), receiptCell(j)].map((c, i) => (
+                  {[signedQuoteCell(j), mandateCell(j), receiptCell(j)].map((c, i) => (
                     <td key={i} className={c.tone === "ok" ? "st matched" : c.tone === "warn" ? "st pending" : "muted"} title={c.title}>
                       {c.mark}
                       {c.text ? ` ${c.text}` : ""}
@@ -480,6 +483,14 @@ export function JobsTab({ live, decimalsOf }: { live: LiveState; decimalsOf: (ne
               <td>
                 The console&apos;s <code>job_quoted</code> event, when it runs with AP2 on: the key id that signed the quote as a UCP checkout and the
                 signature&apos;s SHA-256. The buyer&apos;s agent verified the signature itself with its pinned key; near-watch holds no signature.
+              </td>
+            </tr>
+            <tr>
+              <td>Tenant mandate</td>
+              <td>
+                The <code>mandate</code> on the console&apos;s <code>job_receipt</code> event (with <code>--job-feed-mandate on</code>): the tenant id, the
+                tenant&apos;s key id and the mandate&apos;s SHA-256. The buyer&apos;s agent signed it with the tenant&apos;s key for exactly this signed quote and one
+                payment; ChainAim&apos;s signer verified it before the job ran. near-watch holds no mandate, nonce or account.
               </td>
             </tr>
             <tr>

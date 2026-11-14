@@ -6,6 +6,10 @@
  * (AP2 merchant authorization, ES256) and the buyer's agent can check it with its pinned key; near-watch holds only the key
  * id and the signature's hash. The receipt = the console signed what the job ran on (file, query and result hashes) and,
  * once settled, the transaction that paid for it. Neither is re-verified here: near-watch never holds a signature or key.
+ * ARCH-705 (near-watch ARCH-704, private-ai privateAI-design-42 ARCH-710): the tenant's checkout mandate = the buyer's
+ * agent signed, with the tenant's own key, a closed AP2 Checkout Mandate permitting exactly this signed quote for this one
+ * payment; ChainAim's signer verified it before the job ran and the signed receipt records its hash. Together with the
+ * signed quote that is the deal, signed by both sides.
  */
 import { short } from "./format.ts";
 import type { JobView } from "./types.ts";
@@ -27,12 +31,30 @@ export function receiptCell(j: JobView): ProofCell {
   return { mark: "✓", text: "settled", tone: "ok", title: `Receipt ${r.receiptId} signed by key ${r.keyId}; settlement transaction ${r.transaction}` };
 }
 
+/** The "tenant mandate" column (ARCH-705): ✓ and the tenant id, or – when the receipt records no mandate or none was reported. */
+export function mandateCell(j: JobView): ProofCell {
+  const m = j.mandate;
+  if (!m) return { mark: "–", text: "", tone: "none", title: "No checkout mandate reported (the job was paid without one, mandates are off, or the console runs with --job-feed-mandate off)" };
+  return { mark: "✓", text: m.tenant, tone: "ok", title: `Checkout mandate signed by tenant ${m.tenant} (AP2, key id ${m.kid}), verified by ChainAim's signer before the job ran; the receipt records it · mandate sha256 ${m.sha256}` };
+}
+
+/** The deal in one line (ARCH-705): both signatures present, as the detail panel says it; null when neither is reported. */
+export function dealText(j: JobView): string | null {
+  if (!j.signedQuote && !j.mandate) return null;
+  return `${j.signedQuote ? "ChainAim signed the quote ✓" : "quote not signed –"} · ${j.mandate ? `tenant ${j.mandate.tenant} signed the mandate ✓` : "no tenant mandate –"}`;
+}
+
 /** The job detail rows (label, value, full value for the title). Empty when the job has neither. */
 export function proofRows(j: JobView): [string, string, string][] {
   const rows: [string, string, string][] = [];
   if (j.signedQuote) {
     rows.push(["quote signing key id", j.signedQuote.kid, j.signedQuote.kid]);
     rows.push(["quote hash (merchantAuthSha256)", short(j.signedQuote.merchantAuthSha256, 12, 6), j.signedQuote.merchantAuthSha256]);
+  }
+  if (j.mandate) {
+    rows.push(["mandate tenant", j.mandate.tenant, j.mandate.tenant]);
+    rows.push(["mandate signing key id", j.mandate.kid, j.mandate.kid]);
+    rows.push(["mandate hash (sha256)", short(j.mandate.sha256, 12, 6), j.mandate.sha256]);
   }
   if (j.receipt) {
     rows.push(["receipt id", j.receipt.receiptId, j.receipt.receiptId]);

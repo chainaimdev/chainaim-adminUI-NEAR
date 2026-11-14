@@ -221,6 +221,8 @@ export type JobView = {
   signedQuote?: { kid: string; merchantAuthSha256: string };
   /** ARCH-701 (near-watch): the job's signed receipt as the console reported it; ids and hashes only. */
   receipt?: { tsMs: number; receiptId: string; keyId: string; resultSha256: string; filesRoot: string; settled: boolean; transaction: string | null; receivedMs: number };
+  /** ARCH-705 (near-watch ARCH-704): the buyer agent's AP2 checkout mandate the receipt records; tenant key id, tenant, hash only. */
+  mandate?: { kid: string; tenant: string; sha256: string };
 };
 /**
  * NEAR AI model attestation, as private-ai's ca-attest verified it (near-watch src/jobs.ts): ids, an address, times, checks.

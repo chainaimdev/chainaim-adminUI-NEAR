@@ -233,6 +233,11 @@ function asJob(v: unknown): JobView {
     const r = v.receipt;
     need(isObj(r) && typeof r.receiptId === "string" && typeof r.keyId === "string" && typeof r.settled === "boolean" && (r.transaction === null || typeof r.transaction === "string"), null, "job.receipt is not a receipt");
   }
+  // ARCH-705 (near-watch ARCH-704): absent on jobs without one; when present, a key id, a tenant id and a hash.
+  if (v.mandate !== undefined) {
+    const m = v.mandate;
+    need(isObj(m) && typeof m.kid === "string" && /^[0-9a-f]{32}$/.test(m.kid) && typeof m.tenant === "string" && /^[a-z0-9_-]{1,32}$/.test(m.tenant) && typeof m.sha256 === "string" && /^[0-9a-f]{64}$/.test(m.sha256), null, "job.mandate is not a key id, tenant and hash");
+  }
   return v as unknown as JobView;
 }
 const ATTEST_SET = new Set<string>(ATTEST_SUMMARIES);
