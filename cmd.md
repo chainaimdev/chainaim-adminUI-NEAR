@@ -25,7 +25,7 @@ Do this before private-ai's one-time setup (its `cmd.md`, PART 1): it needs `nea
 Git, Node.js 24 (22.22+), Docker Desktop running.
 
 ```powershell
-cd C:\SATHYA\CHAINAIM3003\mcp-servers
+cd <your-folder>
 git clone https://github.com/chainaimdev/chainaim-adminUI-NEAR.git
 cd chainaim-adminUI-NEAR
 ```
@@ -91,11 +91,11 @@ buyer line per tenant, e.g. `WATCH=t02=buyer=chainaim-t02-seller.testnet` and `W
 
 ```powershell
 # 1. This repo: near-watch container + admin UI (8800)
-cd C:\SATHYA\CHAINAIM3003\mcp-servers\chainaim-adminUI-NEAR
+cd <your-folder>\chainaim-adminUI-NEAR
 .\nearadminup.ps1
 
 # 2. private-ai repo: the six backend containers + the console UI (8730)
-cd C:\SATHYA\CHAINAIM3003\mcp-servers\chainiam-private-ai
+cd <your-folder>\chainaim-private-ai
 .\test-console\up.ps1
 ```
 
@@ -143,11 +143,11 @@ blank column, which is normal for jobs that did not use NEAR AI or were run befo
 
 ```powershell
 # 1. private-ai repo first: console UI + six containers
-cd C:\SATHYA\CHAINAIM3003\mcp-servers\chainiam-private-ai
+cd <your-folder>\chainaim-private-ai
 .\test-console\down.ps1
 
 # 2. This repo: admin UI + ca-near-watch
-cd C:\SATHYA\CHAINAIM3003\mcp-servers\chainaim-adminUI-NEAR
+cd <your-folder>\chainaim-adminUI-NEAR
 .\down.ps1
 ```
 

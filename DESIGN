@@ -1,6 +1,6 @@
 # ARCHITECTURE — chainaim-adminUI-NEAR (new repository)
 
-Model codebase (read-only reference): `C:\SATHYA\CHAINAIM3003\mcp-servers\chainaim-liveops` (XRPL version: `services/ledger-watch`, `apps/admin-console`).
+Model codebase (read-only reference): `<your-folder>\chainaim-liveops` (XRPL version: `services/ledger-watch`, `apps/admin-console`).
 Payment source: `chainiam-private-ai` paywall with the NEAR USDC rail (see `ARCHITECTURE-private-ai-NEAR.md`).
 Sections marked **VERIFIED** were read from code or official docs; **GATE** items must be verified before coding.
 
