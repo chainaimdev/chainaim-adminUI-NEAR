@@ -55,3 +55,15 @@ test("CONSOLE-PROXY-METHOD only GET is proxied", async () => {
     assert.equal(res.status, 405, method);
   }
 });
+
+test("CONSOLE-PROXY-AGENTS private-AI agent calls: /api/watch/agent-calls with limit and tenant only", () => {
+  const r = upstreamFor(BASE, ["agent-calls"], q("limit=200&tenant=jupiter-knitting"));
+  assert.ok(r.ok, JSON.stringify(r));
+  if (r.ok) assert.equal(r.url.href, "http://127.0.0.1:8790/api/agent-calls?limit=200&tenant=jupiter-knitting");
+  const extra = upstreamFor(BASE, ["agent-calls"], q("alias=x"));
+  assert.equal(extra.ok, false);
+  const arity = upstreamFor(BASE, ["agent-calls", "x"], q());
+  assert.equal(arity.ok, false);
+  const ingest = upstreamFor(BASE, ["ingest", "agent"], q());
+  assert.equal(ingest.ok, false, "the console never reaches /ingest");
+});

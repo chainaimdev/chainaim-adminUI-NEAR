@@ -25,10 +25,12 @@ export const ALLOWED_ROUTES: Readonly<Record<string, 1 | 2>> = {
   // Paid jobs (architecture-adminui-jobs.md ARCH-210): /api/jobs and /api/job/<jobId>.
   jobs: 1,
   job: 2,
+  // Private-AI agent calls (services/near-watch/src/agent-calls.ts): /api/agent-calls?limit=&tenant=
+  "agent-calls": 1,
 };
 
 /** Query keys near-watch reads; anything else is refused rather than silently dropped. */
-export const ALLOWED_QUERY_KEYS: ReadonlySet<string> = new Set(["limit", "network", "state"]);
+export const ALLOWED_QUERY_KEYS: ReadonlySet<string> = new Set(["limit", "network", "state", "tenant"]);
 
 /** A path parameter: a base58 tx hash (case-sensitive, passed as given) or an invoice id. */
 const SEGMENT = /^[A-Za-z0-9._:-]{1,128}$/;

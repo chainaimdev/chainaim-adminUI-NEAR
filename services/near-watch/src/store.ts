@@ -26,6 +26,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import type { AgentCallInput, AgentCallRow } from "./agent-calls.ts";
 import type { Row } from "./decode.ts";
 import { ATTEST_SUMMARIES, type AttestedCall, type AttestSummary, type JobAttestation, type JobBreakdown, type JobReceipt, type JobStep, type ReceiptMandate, type SignedQuote } from "./jobs.ts";
 
@@ -190,6 +191,14 @@ export class Store {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS job_mandates (
         job_id TEXT PRIMARY KEY, network TEXT NOT NULL, kid TEXT NOT NULL, tenant TEXT NOT NULL, sha256 TEXT NOT NULL);
+    `);
+    // Private-AI agent calls (src/agent-calls.ts): a new table only; ids, a path, a status and a duration per call.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS agent_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, tenant TEXT, alias TEXT, path TEXT NOT NULL,
+        status INTEGER NOT NULL, ms INTEGER NOT NULL, source TEXT, request_id TEXT, code TEXT, received_ms INTEGER NOT NULL);
+      CREATE UNIQUE INDEX IF NOT EXISTS agent_calls_request ON agent_calls (request_id, path) WHERE request_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS agent_calls_ts ON agent_calls (ts_ms);
     `);
     const v = this.db.prepare("SELECT value FROM meta WHERE key = 'schema'").get() as { value: string } | undefined;
     if (!v) this.db.prepare("INSERT INTO meta (key, value) VALUES ('schema', ?)").run(String(SCHEMA_VERSION));
@@ -451,6 +460,29 @@ export class Store {
   }
 
   // ---- traces ----
+
+  /** One private-AI agent call, stored; null when the same (requestId, path) is already stored. */
+  insertAgentCall(c: AgentCallInput, receivedMs: number): AgentCallRow | null {
+    const r = this.db
+      .prepare(
+        `INSERT INTO agent_calls (ts_ms, tenant, alias, path, status, ms, source, request_id, code, received_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+      )
+      .run(c.tsMs, c.tenant, c.alias, c.path, c.status, c.ms, c.source, c.requestId, c.code, receivedMs);
+    return r.changes === 1 ? { ...c, id: Number(r.lastInsertRowid), receivedMs } : null;
+  }
+
+  /** Agent calls newest first, optionally for one tenant. */
+  recentAgentCalls(limit: number, tenant?: string): AgentCallRow[] {
+    const sql = `SELECT id, ts_ms, tenant, alias, path, status, ms, source, request_id, code, received_ms FROM agent_calls
+      ${tenant ? "WHERE tenant = ?" : ""} ORDER BY ts_ms DESC, id DESC LIMIT ?`;
+    const rows = (tenant ? this.db.prepare(sql).all(tenant, limit) : this.db.prepare(sql).all(limit)) as Record<string, unknown>[];
+    return rows.map((r) => ({
+      id: Number(r.id), tsMs: Number(r.ts_ms), tenant: (r.tenant as string | null) ?? null, alias: (r.alias as string | null) ?? null, path: String(r.path),
+      status: Number(r.status), ms: Number(r.ms), source: (r.source as AgentCallRow["source"]) ?? null, requestId: (r.request_id as string | null) ?? null,
+      code: (r.code as string | null) ?? null, receivedMs: Number(r.received_ms),
+    }));
+  }
 
   insertTrace(t: TraceRow): boolean {
     const r = this.db

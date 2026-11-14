@@ -19,6 +19,9 @@
  *   POST /ingest/trace                  one rig trace step, or a list of up to 100
  * Paid jobs (architecture-adminui-jobs.md ARCH-206..208; src/jobs.ts):
  *   POST /ingest/job                    one job event (job_quoted / job_released / job_expired), or a list of up to 100
+ * Private-AI agent calls (src/agent-calls.ts; chainiam-private-ai quote-agents --feed-url):
+ *   POST /ingest/agent                  one agent_call record, or a list of up to 100
+ *   GET /api/agent-calls?limit=&tenant= calls newest first, plus counts (total, failed, per tenant)
  *   GET /api/jobs?limit=&network=&state=   jobs newest first, counts per state, lost compute
  *   GET /api/job/<jobId>                one job: steps, breakdown, linked claim, transfer and reconcile state
  *   The snapshot carries `jobs` only once a job exists.
@@ -35,6 +38,7 @@
  * a sender can add records but never read them. /ingest is off (404) when no
  * ingest key is configured.
  */
+import { agentCallSummary } from "./agent-calls.ts";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -166,10 +170,10 @@ export class WatchServer {
     });
   }
 
-  /** POST /ingest/claim, /ingest/trace and /ingest/job. */
+  /** POST /ingest/claim, /ingest/trace, /ingest/job and /ingest/agent. */
   private async ingest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const path = new URL(req.url ?? "/", "http://near-watch.local").pathname;
-    const kind = path === "/ingest/claim" ? "claim" : path === "/ingest/trace" ? "trace" : path === "/ingest/job" ? "job" : null;
+    const kind = path === "/ingest/claim" ? "claim" : path === "/ingest/trace" ? "trace" : path === "/ingest/job" ? "job" : path === "/ingest/agent" ? "agent" : null;
     const ingestKey = this.opts.ingestKey ?? null;
     if (!kind || !this.ops || !ingestKey) {
       req.resume();
@@ -199,7 +203,9 @@ export class WatchServer {
     const items = Array.isArray(body) ? body : [body];
     if (items.length === 0 || items.length > INGEST_MAX_ITEMS) return json(res, 400, { error: `send 1 to ${INGEST_MAX_ITEMS} records` });
     const ops = this.ops;
-    const results: IngestResult[] = items.map((item) => (kind === "claim" ? ops.ingestClaim(item, "http") : kind === "job" ? ops.ingestJob(item) : ops.ingestTrace(item)));
+    const results: IngestResult[] = items.map((item) =>
+      kind === "claim" ? ops.ingestClaim(item, "http") : kind === "job" ? ops.ingestJob(item) : kind === "agent" ? ops.ingestAgentCall(item) : ops.ingestTrace(item),
+    );
     const refused = results.flatMap((r, index) => (r.ok ? [] : [{ index, error: r.error }]));
     const accepted = results.filter((r) => r.ok && r.isNew).length;
     const repeats = results.filter((r) => r.ok && !r.isNew).length;
@@ -292,6 +298,12 @@ export class WatchServer {
         return json(res, 200, { counts: this.store.reconCounts(), rows: this.store.recentRecon(limit(100), (state ?? undefined) as ReconState | undefined) });
       }
       if (url.pathname === "/api/metrics") return json(res, 200, this.ops.metrics());
+      if (url.pathname === "/api/agent-calls") {
+        const tenant = url.searchParams.get("tenant");
+        if (tenant !== null && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(tenant)) return json(res, 400, { error: "tenant is not valid" });
+        const calls = this.store.recentAgentCalls(limit(100), tenant ?? undefined);
+        return json(res, 200, { ...agentCallSummary(calls), calls });
+      }
       const t = /^\/api\/trace\/([A-Za-z0-9._:-]{1,128})$/.exec(url.pathname);
       if (t) return json(res, 200, this.ops.traceView(t[1]));
       if (url.pathname === "/api/jobs") {

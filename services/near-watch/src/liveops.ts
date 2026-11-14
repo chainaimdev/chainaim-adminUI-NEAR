@@ -6,6 +6,7 @@
  * Paid jobs (architecture-adminui-jobs.md ARCH-206/207): job events in through ingestJob, joined to claims by the
  * job's release route (src/jobs.ts); the relayer's gas alert (ARCH-209) sits beside low_calls.
  */
+import { parseAgentCall } from "./agent-calls.ts";
 import { AlertGate, LowCallsRule, LowGasRule } from "./alerts.ts";
 import { IngestError, parseClaim, type CaipMap } from "./claims.ts";
 import type { Row } from "./decode.ts";
@@ -126,6 +127,20 @@ export class LiveOps {
     this.counters.traces += 1;
     this.bus.emit("trace", { trace, stepName: TRACE_STEPS[trace.step], txHash: this.store.txByInvoice(trace.invoiceId)?.row.hash ?? null });
     return { ok: true, isNew: true };
+  }
+
+  /** One private-AI agent call (src/agent-calls.ts): stored, or refused whole and alerted agent_call_refused. */
+  ingestAgentCall(input: unknown): IngestResult {
+    let c;
+    try {
+      c = parseAgentCall(input);
+    } catch (e) {
+      if (!(e instanceof IngestError)) throw e;
+      return this.refuse("agent_call_refused", `agent call: ${e.message}`);
+    }
+    const row = this.store.insertAgentCall(c, this.now());
+    // Not sent on the stream (the console polls GET /api/agent-calls), so stream clients see no unknown event name.
+    return { ok: true, isNew: row !== null };
   }
 
   /** One paid-job event (ARCH-206): stored, or refused whole and alerted job_refused. */
